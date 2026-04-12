@@ -14,9 +14,23 @@ while True:
     check, frame = video.read()
     if not check: break
 
-    results = model.predict(frame, classes=[2, 5, 7], conf=0.4, verbose=False)
+    results = model.predict(frame, classes=[2, 5, 7], conf=0.55, verbose=False)
     
     centros_veiculos = []
+
+    for r in results:
+        for box in r.boxes.xyxy:
+            x1, y1, x2, y2 = map(int, box)
+            
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+            
+            cv2.putText(frame, "CARRO", (x1, y1 - 10), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+
+            centro_x = int((x1 + x2) / 2)
+            centro_y = int((y1 + y2) / 2)
+            centros_veiculos.append((centro_x, centro_y))
+
     for r in results:
         for box in r.boxes.xyxy:
             x1, y1, x2, y2 = box
