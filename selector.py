@@ -25,8 +25,8 @@ while True:
     for vaga in vagas:
         cv2.polylines(img_display, [np.array(vaga)], True, (0, 255, 0), 2)
     
-    cv2.imshow("Clique em 4 pontos por vaga | Botão Direito p/ Salvar", img_display)
-    cv2.setMouseCallback("Clique em 4 pontos por vaga | Botão Direito p/ Salvar", mouse_click)
+    cv2.imshow("Clique em 4 pontos por vaga | Botao Direito p/ Salvar", img_display)
+    cv2.setMouseCallback("Clique em 4 pontos por vaga | Botao Direito p/ Salvar", mouse_click)
     
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break

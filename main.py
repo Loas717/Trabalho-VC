@@ -3,7 +3,7 @@ import pickle
 import numpy as np
 from ultralytics import YOLO
 
-model = YOLO('yolov8n.pt') 
+model = YOLO('yolo11n.pt') 
 
 with open('vagas_coordenadas.pkl', 'rb') as f:
     vagas_pos = pickle.load(f)
@@ -14,7 +14,7 @@ while True:
     check, frame = video.read()
     if not check: break
 
-    results = model.predict(frame, classes=[2, 5, 7], conf=0.55, verbose=False)
+    results = model.predict(frame, classes=[2, 5, 7], conf=0.4, iou=0.5, verbose=False)
     
     centros_veiculos = []
 
@@ -57,6 +57,6 @@ while True:
     cv2.putText(frame, f'Vagas Livres: {vagas_livres}', (30, 50), 
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
 
-    cv2.imshow("Detecção com YOLOv8", frame)
+    cv2.imshow("Deteccao com YOLO", frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
