@@ -1,5 +1,7 @@
 *.pt
 *.pkl
+cenarios/*/video.mp4
+cenarios/*/base.png
 .venv/
 .python311/
 __pycache__/
@@ -7,3 +9,4 @@ __pycache__/
 python-3.11.9-amd64.exe
 setup_windows.ps1
 AGENTS.md
+assets/

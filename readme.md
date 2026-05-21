@@ -24,9 +24,12 @@ Marque as vagas:
 python selector.py
 ```
 
+O programa vai perguntar qual estacionamento/cenario voce quer editar.
+
 Na janela do seletor:
 
-- se `vagas_coordenadas.pkl` existir, as vagas salvas ja aparecem marcadas;
+- se `vagas_coordenadas.pkl` existir no cenario escolhido, as vagas salvas ja aparecem marcadas;
+- se `base.png` nao existir, ela sera criada automaticamente a partir do primeiro frame de `video.mp4`;
 - clique em 4 pontos para adicionar uma nova vaga;
 - arraste os pontos amarelos para editar uma vaga existente;
 - pressione `d` para apagar a vaga sob o mouse;
@@ -40,9 +43,46 @@ Execute a deteccao:
 python main.py
 ```
 
+O programa tambem vai perguntar qual estacionamento/cenario voce quer analisar.
+
 Por padrao, a deteccao usa `yolo11s.pt`, que e mais pesado que `yolo11n.pt`, mas tende a detectar melhor os veiculos. Na primeira execucao, o modelo pode ser baixado automaticamente.
 
 O resultado tambem usa suavizacao temporal: uma vaga so muda de estado depois de aparecer como livre/ocupada em varios frames, reduzindo piscadas e erros momentaneos.
+
+As janelas do seletor e da deteccao abrem sempre em `1280x720`. A imagem/video e encaixado nesse tamanho com bordas pretas quando necessario, e as coordenadas continuam sendo salvas no tamanho original.
+
+Para videos grandes, como 4K, a inferencia do YOLO e feita em largura reduzida de `1280px` e depois convertida de volta para a escala original. Isso melhora bastante a velocidade sem mudar as coordenadas das vagas.
+
+## Estrutura dos cenarios
+
+Cada estacionamento deve ficar em uma pasta propria dentro de `cenarios/`:
+
+```text
+cenarios/
+  estacionamento_video/
+    video.mp4
+    base.png
+    vagas_coordenadas.pkl
+
+  shopping_a/
+    video.mp4
+    base.png
+    vagas_coordenadas.pkl
+```
+
+Arquivos esperados:
+
+- `video.mp4`: video usado na deteccao.
+- `base.png`: imagem usada pelo seletor para marcar as vagas. Se nao existir, o `selector.py` cria a partir do primeiro frame do video.
+- `vagas_coordenadas.pkl`: coordenadas das vagas daquele cenario. Se nao existir, o `selector.py` cria quando voce salvar.
+
+Para adicionar um novo estacionamento, crie uma pasta dentro de `cenarios/` e coloque o video como `video.mp4`. Depois rode:
+
+```powershell
+python selector.py
+```
+
+Escolha o novo cenario no menu, marque as vagas e salve.
 
 ## Rodando com Docker
 
