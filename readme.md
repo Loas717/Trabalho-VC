@@ -2,6 +2,36 @@
 
 Prototipo academico para detectar vagas livres e ocupadas em um estacionamento usando Python, OpenCV e YOLO.
 
+## Rodando localmente no Windows
+
+Use Python 3.11. O Python 3.14 pode falhar com PyTorch/Ultralytics porque as dependencias ainda podem nao ter wheels compativeis.
+
+Prepare o ambiente:
+
+```powershell
+.\setup_windows.ps1
+```
+
+Ative o ambiente virtual:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Marque as vagas:
+
+```powershell
+python selector.py
+```
+
+Na janela, clique em 4 pontos para cada vaga. Clique com o botao direito para salvar `vagas_coordenadas.pkl` e pressione `q` para sair.
+
+Execute a deteccao:
+
+```powershell
+python main.py
+```
+
 ## Rodando com Docker
 
 Construa a imagem:
@@ -45,11 +75,20 @@ Configuracao recomendada com VcXsrv:
 5. Marque `Disable access control`.
 6. Finalize e mantenha o VcXsrv aberto.
 
+Alternativa mais direta pelo PowerShell:
+
+```powershell
+& "C:\Program Files\VcXsrv\vcxsrv.exe" :0 -multiwindow -clipboard -wgl -ac
+```
+
+Se o Windows Firewall perguntar, permita o acesso do VcXsrv em redes privadas.
+
 O `docker-compose.yml` ja esta configurado com:
 
 ```yaml
-DISPLAY: host.docker.internal:0.0
+DISPLAY: host.docker.internal:0
 QT_X11_NO_MITSHM: "1"
+LIBGL_ALWAYS_INDIRECT: "1"
 ```
 
 Depois disso, rode normalmente:
@@ -61,22 +100,10 @@ docker compose run --rm estacionamento-vc python main.py
 
 Se a janela nao abrir, verifique se o VcXsrv esta rodando e se o firewall do Windows permitiu acesso para ele.
 
-## Rodando localmente sem Docker
-
-Instale as dependencias:
+Para diagnosticar a conexao com o X Server:
 
 ```powershell
-pip install -r requirements.txt
+docker compose run --rm estacionamento-vc python -c "import os; print(os.environ.get('DISPLAY'))"
 ```
 
-Marque as vagas:
-
-```powershell
-python selector.py
-```
-
-Execute a deteccao:
-
-```powershell
-python main.py
-```
+O resultado esperado e `host.docker.internal:0`.
