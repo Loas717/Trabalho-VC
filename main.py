@@ -2,16 +2,20 @@ import cv2
 import pickle
 import numpy as np
 from collections import deque
+from pathlib import Path
 from ultralytics import YOLO
 from cenarios import escolher_cenario
 
 MODELO_YOLO = 'yolo11s.pt'
+MODELO_CLASSIFICADOR_VAGAS = 'models/parking_occupancy_yolo11n_cls.pt'
 CLASSES_VEICULOS = [2, 3, 5, 7]  # car, motorcycle, bus, truck no COCO
 CONFIANCA_MINIMA = 0.30
 IOU_YOLO = 0.50
-LIMIAR_SOBREPOSICAO_VAGA = 0.12
+LIMIAR_SOBREPOSICAO_VAGA = 0.35
+CONFIANCA_OCUPADA_CLASSIFICADOR = 0.88
+CONFIANCA_LIVRE_CLASSIFICADOR = 0.90
 JANELA_SUAVIZACAO = 5
-MIN_OCUPACOES_NA_JANELA = 3
+MIN_OCUPACOES_NA_JANELA = 4
 TITULO_JANELA = "Deteccao com YOLO"
 LARGURA_JANELA = 1280
 ALTURA_JANELA = 720
@@ -32,6 +36,11 @@ if not ARQUIVO_COORDENADAS.exists():
     )
 
 model = YOLO(MODELO_YOLO)
+classificador_vagas = YOLO(MODELO_CLASSIFICADOR_VAGAS) if Path(MODELO_CLASSIFICADOR_VAGAS).exists() else None
+if classificador_vagas is None:
+    print(f"Classificador de vagas nao encontrado em {MODELO_CLASSIFICADOR_VAGAS}. Usando apenas YOLO detector.")
+else:
+    print(f"Classificador de vagas carregado: {MODELO_CLASSIFICADOR_VAGAS}")
 
 with open(ARQUIVO_COORDENADAS, 'rb') as f:
     vagas_pos = pickle.load(f)
@@ -80,6 +89,61 @@ def converter_caixa_para_original(caixa, escala_x, escala_y):
     )
 
 
+def recortar_vaga(frame, vaga_poly):
+    altura_frame, largura_frame = frame.shape[:2]
+    x, y, w, h = cv2.boundingRect(vaga_poly)
+
+    x1 = max(0, x)
+    y1 = max(0, y)
+    x2 = min(largura_frame, x + w)
+    y2 = min(altura_frame, y + h)
+
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    recorte = frame[y1:y2, x1:x2]
+    if recorte.size == 0:
+        return None
+
+    vaga_roi = vaga_poly - np.array([x1, y1])
+    mascara = np.zeros((recorte.shape[0], recorte.shape[1]), dtype=np.uint8)
+    cv2.fillPoly(mascara, [vaga_roi], 255)
+    return cv2.bitwise_and(recorte, recorte, mask=mascara)
+
+
+def classificar_vagas(frame, vagas):
+    if classificador_vagas is None:
+        return [(False, 0.0, "sem_modelo")] * len(vagas)
+
+    recortes = []
+    indices_validos = []
+
+    for idx, vaga in enumerate(vagas):
+        vaga_poly = np.array(vaga, np.int32)
+        recorte = recortar_vaga(frame, vaga_poly)
+        if recorte is not None:
+            recortes.append(recorte)
+            indices_validos.append(idx)
+
+    ocupadas = [(False, 0.0, "sem_recorte")] * len(vagas)
+    if not recortes:
+        return ocupadas
+
+    resultados = classificador_vagas.predict(recortes, imgsz=128, verbose=False)
+    for idx, resultado in zip(indices_validos, resultados):
+        nomes = resultado.names
+        classe_id = int(resultado.probs.top1)
+        confianca = float(resultado.probs.top1conf)
+        classe_nome = nomes[classe_id].lower()
+        ocupadas[idx] = (
+            classe_nome == "occupied" and confianca >= CONFIANCA_OCUPADA_CLASSIFICADOR,
+            confianca,
+            classe_nome,
+        )
+
+    return ocupadas
+
+
 def centro_da_caixa(caixa):
     x1, y1, x2, y2 = caixa
     return int((x1 + x2) / 2), int((y1 + y2) / 2)
@@ -124,16 +188,14 @@ def proporcao_sobreposta(vaga_poly, caixa, tamanho_frame):
     return area_intersecao / area_vaga
 
 
-def vaga_esta_ocupada(vaga_poly, caixas_veiculos, tamanho_frame):
+def maior_sobreposicao_vaga(vaga_poly, caixas_veiculos, tamanho_frame):
+    maior_sobreposicao = 0
+
     for caixa in caixas_veiculos:
-        cx, cy = centro_da_caixa(caixa)
-        centro_dentro = cv2.pointPolygonTest(vaga_poly, (cx, cy), False) >= 0
         sobreposicao = proporcao_sobreposta(vaga_poly, caixa, tamanho_frame)
+        maior_sobreposicao = max(maior_sobreposicao, sobreposicao)
 
-        if centro_dentro or sobreposicao >= LIMIAR_SOBREPOSICAO_VAGA:
-            return True
-
-    return False
+    return maior_sobreposicao
 
 escala_visualizacao = None
 fps_video = video.get(cv2.CAP_PROP_FPS) or 30
@@ -141,6 +203,7 @@ tempo_ultimo_frame = cv2.getTickCount()
 numero_frame = 0
 caixas_veiculos = []
 deteccoes_atuais = []
+ocupacao_classificador = [(False, 0.0, "inicial")] * len(vagas_pos)
 
 while True:
     check, frame = video.read()
@@ -166,6 +229,7 @@ while True:
 
         caixas_veiculos = []
         deteccoes_atuais = []
+        ocupacao_classificador = classificar_vagas(frame, vagas_pos)
 
         for r in results:
             for box, conf in zip(r.boxes.xyxy, r.boxes.conf):
@@ -188,7 +252,12 @@ while True:
 
     for idx, vaga in enumerate(vagas_pos):
         vaga_poly = np.array(vaga, np.int32)
-        ocupada_agora = vaga_esta_ocupada(vaga_poly, caixas_veiculos, frame.shape)
+        ocupada_cls, confianca_cls, classe_cls = ocupacao_classificador[idx]
+        sobreposicao_yolo = maior_sobreposicao_vaga(vaga_poly, caixas_veiculos, frame.shape)
+        ocupada_yolo = sobreposicao_yolo >= LIMIAR_SOBREPOSICAO_VAGA
+        classificador_livre_forte = classe_cls == "empty" and confianca_cls >= CONFIANCA_LIVRE_CLASSIFICADOR
+
+        ocupada_agora = ocupada_cls or (ocupada_yolo and not classificador_livre_forte)
         historico_vagas[idx].append(ocupada_agora)
         ocupada = sum(historico_vagas[idx]) >= MIN_OCUPACOES_NA_JANELA
         
@@ -199,6 +268,10 @@ while True:
             vagas_livres += 1
         
         cv2.polylines(frame, [vaga_poly], True, color, 2)
+        x, y, _, _ = cv2.boundingRect(vaga_poly)
+        origem = "Y" if ocupada_yolo else ("C" if ocupada_cls else "-")
+        cv2.putText(frame, f"{origem} {classe_cls[:3]} {confianca_cls:.2f} ov {sobreposicao_yolo:.2f}", (x, max(20, y - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
     cv2.putText(frame, f'Vagas Livres: {vagas_livres}', (30, 50), 
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)

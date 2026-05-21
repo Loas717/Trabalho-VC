@@ -11,3 +11,6 @@ setup_windows.ps1
 AGENTS.md
 assets/
 dataset/
+dataset_parking_cls/
+runs/
+models/

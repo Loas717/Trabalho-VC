@@ -53,6 +53,39 @@ As janelas do seletor e da deteccao abrem sempre em `1280x720`. A imagem/video e
 
 Para videos grandes, como 4K, a inferencia do YOLO e feita em largura reduzida de `1280px` e depois convertida de volta para a escala original. Isso melhora bastante a velocidade sem mudar as coordenadas das vagas.
 
+## Treinando classificador de vagas
+
+Se existir um dataset no formato:
+
+```text
+dataset/
+  empty/
+  occupied/
+```
+
+prepare o dataset de treino/validacao:
+
+```powershell
+python preparar_dataset_classificacao.py
+```
+
+Treine o classificador leve com YOLO11 nano:
+
+```powershell
+python treinar_classificador_vagas.py
+```
+
+O modelo final sera salvo em:
+
+```text
+models/parking_occupancy_yolo11n_cls.pt
+```
+
+Quando esse arquivo existir, o `main.py` usa duas evidencias para decidir se uma vaga esta ocupada:
+
+- deteccao de veiculo com YOLO;
+- classificacao do recorte da vaga como `occupied`.
+
 ## Estrutura dos cenarios
 
 Cada estacionamento deve ficar em uma pasta propria dentro de `cenarios/`:
