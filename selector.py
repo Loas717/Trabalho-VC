@@ -78,10 +78,14 @@ def mouse_click(event, x, y, flags, params):
 
 def desenhar_interface(img):
     img_display = img.copy()
+    overlay = img_display.copy()
+    vaga_hover = encontrar_vaga_sob_mouse(*mouse_pos)
 
     for idx, vaga in enumerate(vagas, start=1):
         vaga_poly = np.array(vaga, np.int32)
-        cv2.polylines(img_display, [vaga_poly], True, (0, 255, 0), 2)
+        cor = (0, 180, 255) if vaga_hover == idx - 1 else (0, 255, 0)
+        cv2.fillPoly(overlay, [vaga_poly], cor)
+        cv2.polylines(img_display, [vaga_poly], True, cor, 2)
 
         for px, py in vaga:
             cv2.circle(img_display, (px, py), 5, (0, 255, 255), -1)
@@ -97,14 +101,19 @@ def desenhar_interface(img):
             2
         )
 
+    img_display = cv2.addWeighted(overlay, 0.18, img_display, 0.82, 0)
+
     if vaga_atual:
         for ponto in vaga_atual:
             cv2.circle(img_display, ponto, 5, (255, 0, 0), -1)
         if len(vaga_atual) > 1:
             cv2.polylines(img_display, [np.array(vaga_atual, np.int32)], False, (255, 0, 0), 2)
+        cv2.line(img_display, vaga_atual[-1], mouse_pos, (255, 0, 0), 1)
+        if len(vaga_atual) == 3:
+            cv2.line(img_display, mouse_pos, vaga_atual[0], (255, 0, 0), 1)
 
     instrucoes = [
-        "Clique: novo ponto | Arraste ponto amarelo: editar",
+        "Clique: novo ponto | Arraste ponto amarelo: ajustar recorte",
         "Botao direito ou S: salvar | D: apagar vaga sob mouse | U: desfazer | Q: sair",
         f"Vagas: {len(vagas)} | Pontos da nova vaga: {len(vaga_atual)}/4",
     ]

@@ -40,6 +40,10 @@ Execute a deteccao:
 python main.py
 ```
 
+Por padrao, a deteccao usa `yolo11s.pt`, que e mais pesado que `yolo11n.pt`, mas tende a detectar melhor os veiculos. Na primeira execucao, o modelo pode ser baixado automaticamente.
+
+O resultado tambem usa suavizacao temporal: uma vaga so muda de estado depois de aparecer como livre/ocupada em varios frames, reduzindo piscadas e erros momentaneos.
+
 ## Rodando com Docker
 
 Construa a imagem:

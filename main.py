@@ -1,15 +1,18 @@
 import cv2
 import pickle
 import numpy as np
+from collections import deque
 from ultralytics import YOLO
 
-MODELO_YOLO = 'yolo11n.pt'
+MODELO_YOLO = 'yolo11s.pt'
 ARQUIVO_COORDENADAS = 'vagas_coordenadas.pkl'
 VIDEO_ENTRADA = 'estacionamento_video.mp4'
 CLASSES_VEICULOS = [2, 3, 5, 7]  # car, motorcycle, bus, truck no COCO
 CONFIANCA_MINIMA = 0.30
 IOU_YOLO = 0.50
 LIMIAR_SOBREPOSICAO_VAGA = 0.12
+JANELA_SUAVIZACAO = 5
+MIN_OCUPACOES_NA_JANELA = 3
 
 model = YOLO(MODELO_YOLO)
 
@@ -17,6 +20,7 @@ with open(ARQUIVO_COORDENADAS, 'rb') as f:
     vagas_pos = pickle.load(f)
 
 video = cv2.VideoCapture(VIDEO_ENTRADA)
+historico_vagas = [deque(maxlen=JANELA_SUAVIZACAO) for _ in vagas_pos]
 
 
 def centro_da_caixa(caixa):
@@ -86,9 +90,11 @@ while True:
     vagas_livres = 0
     vagas_ocupadas = 0
 
-    for vaga in vagas_pos:
+    for idx, vaga in enumerate(vagas_pos):
         vaga_poly = np.array(vaga, np.int32)
-        ocupada = vaga_esta_ocupada(vaga_poly, caixas_veiculos, frame.shape)
+        ocupada_agora = vaga_esta_ocupada(vaga_poly, caixas_veiculos, frame.shape)
+        historico_vagas[idx].append(ocupada_agora)
+        ocupada = sum(historico_vagas[idx]) >= MIN_OCUPACOES_NA_JANELA
         
         color = (0, 0, 255) if ocupada else (0, 255, 0)
         if ocupada:
