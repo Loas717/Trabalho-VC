@@ -24,7 +24,15 @@ Marque as vagas:
 python selector.py
 ```
 
-Na janela, clique em 4 pontos para cada vaga. Clique com o botao direito para salvar `vagas_coordenadas.pkl` e pressione `q` para sair.
+Na janela do seletor:
+
+- se `vagas_coordenadas.pkl` existir, as vagas salvas ja aparecem marcadas;
+- clique em 4 pontos para adicionar uma nova vaga;
+- arraste os pontos amarelos para editar uma vaga existente;
+- pressione `d` para apagar a vaga sob o mouse;
+- pressione `u` para desfazer o ultimo ponto ou a ultima vaga;
+- clique com o botao direito ou pressione `s` para salvar;
+- pressione `q` para sair.
 
 Execute a deteccao:
 
