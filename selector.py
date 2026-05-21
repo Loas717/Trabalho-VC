@@ -1,17 +1,25 @@
 import cv2
 import pickle
 import numpy as np
-from pathlib import Path
+from cenarios import escolher_cenario
 
-ARQUIVO_COORDENADAS = Path('vagas_coordenadas.pkl')
-IMAGEM_BASE = Path('estacionamento_base.png')
 TITULO_JANELA = "Editor de vagas"
 RAIO_SELECAO = 12
+LARGURA_JANELA = 1280
+ALTURA_JANELA = 720
+
+cenario = escolher_cenario("editar as vagas")
+ARQUIVO_COORDENADAS = cenario.coordenadas
+IMAGEM_BASE = cenario.imagem_base
+VIDEO_ENTRADA = cenario.video
 
 vagas = []
 vaga_atual = []
 ponto_arrastando = None
 mouse_pos = (0, 0)
+escala_visualizacao = 1.0
+offset_x_visualizacao = 0
+offset_y_visualizacao = 0
 
 
 def carregar_vagas():
@@ -32,6 +40,27 @@ def salvar_vagas():
     print(f"{len(vagas)} vaga(s) salva(s) em {ARQUIVO_COORDENADAS}.")
 
 
+def criar_imagem_base_pelo_video():
+    if IMAGEM_BASE.exists():
+        return
+
+    if not VIDEO_ENTRADA.exists():
+        raise FileNotFoundError(
+            f"Imagem base nao encontrada ({IMAGEM_BASE}) e video nao encontrado ({VIDEO_ENTRADA})."
+        )
+
+    video = cv2.VideoCapture(str(VIDEO_ENTRADA))
+    check, frame = video.read()
+    video.release()
+
+    if not check:
+        raise RuntimeError(f"Nao foi possivel ler o primeiro frame do video: {VIDEO_ENTRADA}")
+
+    IMAGEM_BASE.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(IMAGEM_BASE), frame)
+    print(f"Imagem base criada automaticamente em {IMAGEM_BASE}.")
+
+
 def encontrar_ponto_proximo(x, y):
     for vaga_idx, vaga in enumerate(vagas):
         for ponto_idx, (px, py) in enumerate(vaga):
@@ -49,17 +78,95 @@ def encontrar_vaga_sob_mouse(x, y):
     return None
 
 
+def calcular_escala_visualizacao(img):
+    altura, largura = img.shape[:2]
+    return min(LARGURA_JANELA / largura, ALTURA_JANELA / altura)
+
+
+def converter_mouse_para_original(x, y):
+    x_sem_borda = x - offset_x_visualizacao
+    y_sem_borda = y - offset_y_visualizacao
+    x_original = int(x_sem_borda / escala_visualizacao)
+    y_original = int(y_sem_borda / escala_visualizacao)
+    largura_original = img.shape[1] - 1
+    altura_original = img.shape[0] - 1
+    return (
+        max(0, min(largura_original, x_original)),
+        max(0, min(altura_original, y_original)),
+    )
+
+
+def preparar_para_exibir(img):
+    largura = int(img.shape[1] * escala_visualizacao)
+    altura = int(img.shape[0] * escala_visualizacao)
+    img_redimensionada = cv2.resize(img, (largura, altura), interpolation=cv2.INTER_AREA)
+    canvas = np.zeros((ALTURA_JANELA, LARGURA_JANELA, 3), dtype=np.uint8)
+    canvas[
+        offset_y_visualizacao:offset_y_visualizacao + altura,
+        offset_x_visualizacao:offset_x_visualizacao + largura
+    ] = img_redimensionada
+    return canvas
+
+
+def desenhar_texto_com_contorno(img, texto, origem, escala, cor=(255, 255, 255)):
+    cv2.putText(img, texto, origem, cv2.FONT_HERSHEY_SIMPLEX, escala, (0, 0, 0), max(2, int(escala * 5)))
+    cv2.putText(img, texto, origem, cv2.FONT_HERSHEY_SIMPLEX, escala, cor, max(1, int(escala * 2)))
+
+
+def quebrar_texto_por_largura(texto, escala, largura_maxima):
+    palavras = texto.split()
+    linhas = []
+    linha_atual = ""
+
+    for palavra in palavras:
+        candidata = palavra if not linha_atual else f"{linha_atual} {palavra}"
+        largura_texto = cv2.getTextSize(candidata, cv2.FONT_HERSHEY_SIMPLEX, escala, 2)[0][0]
+
+        if largura_texto <= largura_maxima or not linha_atual:
+            linha_atual = candidata
+        else:
+            linhas.append(linha_atual)
+            linha_atual = palavra
+
+    if linha_atual:
+        linhas.append(linha_atual)
+
+    return linhas
+
+
+def desenhar_instrucoes(img):
+    instrucoes = [
+        "Clique: novo ponto | Arraste ponto amarelo: ajustar recorte",
+        "Botao direito ou S: salvar | D: apagar vaga sob mouse | U: desfazer | Q: sair",
+        f"Vagas: {len(vagas)} | Pontos da nova vaga: {len(vaga_atual)}/4",
+    ]
+
+    escala_texto = max(0.45, min(0.85, LARGURA_JANELA / 1500))
+    margem = max(8, int(LARGURA_JANELA * 0.01))
+    y = margem + int(24 * escala_texto)
+    altura_linha = int(34 * escala_texto)
+    largura_texto = LARGURA_JANELA - (margem * 2)
+
+    for instrucao in instrucoes:
+        for linha in quebrar_texto_por_largura(instrucao, escala_texto, largura_texto):
+            desenhar_texto_com_contorno(img, linha, (margem, y), escala_texto)
+            y += altura_linha
+
+    return img
+
+
 def mouse_click(event, x, y, flags, params):
     global vaga_atual, ponto_arrastando, mouse_pos
-    mouse_pos = (x, y)
+    x_original, y_original = converter_mouse_para_original(x, y)
+    mouse_pos = (x_original, y_original)
 
     if event == cv2.EVENT_LBUTTONDOWN:
-        ponto_proximo = encontrar_ponto_proximo(x, y)
+        ponto_proximo = encontrar_ponto_proximo(x_original, y_original)
         if ponto_proximo:
             ponto_arrastando = ponto_proximo
             return
 
-        vaga_atual.append((x, y))
+        vaga_atual.append((x_original, y_original))
         if len(vaga_atual) == 4:
             vagas.append(vaga_atual.copy())
             vaga_atual = []
@@ -67,7 +174,7 @@ def mouse_click(event, x, y, flags, params):
 
     elif event == cv2.EVENT_MOUSEMOVE and ponto_arrastando:
         vaga_idx, ponto_idx = ponto_arrastando
-        vagas[vaga_idx][ponto_idx] = (x, y)
+        vagas[vaga_idx][ponto_idx] = (x_original, y_original)
 
     elif event == cv2.EVENT_LBUTTONUP:
         ponto_arrastando = None
@@ -112,31 +219,29 @@ def desenhar_interface(img):
         if len(vaga_atual) == 3:
             cv2.line(img_display, mouse_pos, vaga_atual[0], (255, 0, 0), 1)
 
-    instrucoes = [
-        "Clique: novo ponto | Arraste ponto amarelo: ajustar recorte",
-        "Botao direito ou S: salvar | D: apagar vaga sob mouse | U: desfazer | Q: sair",
-        f"Vagas: {len(vagas)} | Pontos da nova vaga: {len(vaga_atual)}/4",
-    ]
-
-    y = 25
-    for texto in instrucoes:
-        cv2.putText(img_display, texto, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3)
-        cv2.putText(img_display, texto, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-        y += 25
-
     return img_display
 
 
 vagas = carregar_vagas()
+criar_imagem_base_pelo_video()
 img = cv2.imread(str(IMAGEM_BASE))
 if img is None:
     raise FileNotFoundError(f"Imagem base nao encontrada: {IMAGEM_BASE}")
 
-cv2.namedWindow(TITULO_JANELA)
+escala_visualizacao = calcular_escala_visualizacao(img)
+largura_exibida = int(img.shape[1] * escala_visualizacao)
+altura_exibida = int(img.shape[0] * escala_visualizacao)
+offset_x_visualizacao = (LARGURA_JANELA - largura_exibida) // 2
+offset_y_visualizacao = (ALTURA_JANELA - altura_exibida) // 2
+print(f"Janela do seletor em {LARGURA_JANELA}x{ALTURA_JANELA}. Coordenadas salvas no tamanho original.")
+
+cv2.namedWindow(TITULO_JANELA, cv2.WINDOW_NORMAL)
+cv2.resizeWindow(TITULO_JANELA, LARGURA_JANELA, ALTURA_JANELA)
 cv2.setMouseCallback(TITULO_JANELA, mouse_click)
 
 while True:
-    cv2.imshow(TITULO_JANELA, desenhar_interface(img))
+    frame_exibicao = preparar_para_exibir(desenhar_interface(img))
+    cv2.imshow(TITULO_JANELA, desenhar_instrucoes(frame_exibicao))
 
     tecla = cv2.waitKey(1) & 0xFF
     if tecla == ord('q'):
