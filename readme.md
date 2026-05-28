@@ -90,6 +90,8 @@ Principais parametros:
   "confianca_ocupada": 0.96,
   "confianca_ocupada_sem_yolo": 0.995,
   "confianca_livre": 0.90,
+  "confianca_livre_fraca": 0.50,
+  "liberar_sem_evidencia_de_veiculo": true,
   "permitir_ocupada_sem_yolo": false
 }
 ```
@@ -103,6 +105,8 @@ Significado:
 - `confianca_ocupada`: confianca minima do classificador para aceitar `occupied` quando tambem existe evidencia do YOLO. `0.96` exige 96% de confianca.
 - `confianca_ocupada_sem_yolo`: confianca minima para aceitar `occupied` sem apoio do YOLO, usada apenas se `permitir_ocupada_sem_yolo` for `true`.
 - `confianca_livre`: confianca minima do classificador para aceitar `empty`. `0.90` exige 90% de confianca. Aumentar evita falso livre; diminuir libera mais vagas.
+- `confianca_livre_fraca`: confianca minima para usar `empty` como sinal fraco de ausencia de veiculo quando o YOLO tambem nao ve carro na vaga.
+- `liberar_sem_evidencia_de_veiculo`: quando `true`, uma vaga ocupada pode voltar para livre se nao houver evidencia atual de veiculo nela. Isso evita o estado ficar preso como ocupado depois que o carro sai.
 - `permitir_ocupada_sem_yolo`: quando `false`, o classificador sozinho nao marca vaga como ocupada. Isso e util quando o modelo ainda esta confundindo piso, placa ou linhas com carro.
 
 Outros parametros uteis:

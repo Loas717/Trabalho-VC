@@ -146,6 +146,7 @@ def decidir_ocupacao(evidencia, associacao, historico, config):
         classe_cls == "occupied" and confianca_cls >= float(config["confianca_ocupada_sem_yolo"])
     )
     livre_cls_forte = classe_cls == "empty" and confianca_cls >= float(config["confianca_livre"])
+    livre_cls_fraco = classe_cls == "empty" and confianca_cls >= float(config["confianca_livre_fraca"])
     escore_linhas = evidencia["linhas"]["escore"]
     linhas_livre = escore_linhas >= float(config["limiar_linhas_livre"])
     linhas_livre_forte = escore_linhas >= float(config["limiar_linhas_livre_forte"])
@@ -169,6 +170,10 @@ def decidir_ocupacao(evidencia, associacao, historico, config):
 
     if linhas_livre:
         return False, "L", ocupada_yolo, linhas_livre
+
+    if config["liberar_sem_evidencia_de_veiculo"] and not ocupada_yolo and not ocupada_cls:
+        if classe_cls != "occupied" or livre_cls_fraco:
+            return False, "A", ocupada_yolo, linhas_livre
 
     estado_anterior = bool(historico[-1]) if historico else False
     return estado_anterior, "-", ocupada_yolo, linhas_livre
