@@ -1,5 +1,4 @@
 *.pt
-*.pkl
 .venv/
 .python311/
 __pycache__/
@@ -13,4 +12,3 @@ dataset_recortes/
 debug/
 runs/
 models/
-cenarios/*/config.example.json
