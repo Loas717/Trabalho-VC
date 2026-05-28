@@ -12,5 +12,8 @@ AGENTS.md
 assets/
 dataset/
 dataset_parking_cls/
+dataset_recortes/
+debug/
 runs/
 models/
+cenarios/*/config.example.json

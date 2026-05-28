@@ -1,0 +1,23 @@
+{
+  "modelo_yolo": "yolo11s.pt",
+  "modelo_classificador_vagas": "models/parking_occupancy_yolo11n_cls.pt",
+  "classes_veiculos": [2, 3, 5, 7],
+  "confianca_minima_yolo": 0.3,
+  "iou_yolo": 0.5,
+  "limiar_sobreposicao": 0.45,
+  "limiar_sobreposicao_sem_ponto_base": 0.75,
+  "limiar_sobreposicao_associacao": 0.08,
+  "limiar_linhas_livre": 0.18,
+  "limiar_linhas_livre_forte": 0.65,
+  "confianca_ocupada": 0.96,
+  "confianca_ocupada_sem_yolo": 0.995,
+  "confianca_livre": 0.9,
+  "margem_desempate_classificador": 0.08,
+  "permitir_ocupada_sem_yolo": false,
+  "janela_suavizacao": 5,
+  "min_ocupacoes_na_janela": 4,
+  "largura_inferencia": 960,
+  "detectar_a_cada_n_frames": 3,
+  "pular_frames": true,
+  "tamanho_recorte_vaga": 160
+}

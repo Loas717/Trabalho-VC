@@ -45,13 +45,105 @@ python main.py
 
 O programa tambem vai perguntar qual estacionamento/cenario voce quer analisar.
 
+Tambem e possivel informar o cenario direto pelo terminal:
+
+```powershell
+python main.py --cenario estacionamento_video
+```
+
 Por padrao, a deteccao usa `yolo11s.pt`, que e mais pesado que `yolo11n.pt`, mas tende a detectar melhor os veiculos. Na primeira execucao, o modelo pode ser baixado automaticamente.
 
 O resultado tambem usa suavizacao temporal: uma vaga so muda de estado depois de aparecer como livre/ocupada em varios frames, reduzindo piscadas e erros momentaneos.
 
 As janelas do seletor e da deteccao abrem sempre em `1280x720`. A imagem/video e encaixado nesse tamanho com bordas pretas quando necessario, e as coordenadas continuam sendo salvas no tamanho original.
 
-Para videos grandes, como 4K, a inferencia do YOLO e feita em largura reduzida de `1280px` e depois convertida de volta para a escala original. Isso melhora bastante a velocidade sem mudar as coordenadas das vagas.
+Para videos grandes, como 4K, a inferencia do YOLO e feita em largura reduzida, definida por `largura_inferencia`, e depois convertida de volta para a escala original. Isso melhora bastante a velocidade sem mudar as coordenadas das vagas.
+
+## Como a decisao de ocupacao funciona
+
+O `main.py` combina tres evidencias:
+
+- YOLO detecta veiculos e associa cada veiculo a melhor vaga, evitando que a mesma caixa marque varias vagas vizinhas.
+- Um classificador de recortes, quando existir em `models/parking_occupancy_yolo11n_cls.pt`, decide se a vaga parece `empty` ou `occupied`.
+- Um analisador de linhas procura marcacoes brancas/amarelas da vaga no recorte normalizado. Se muitas linhas aparecem e nao ha veiculo forte na vaga, isso ajuda a considerar a vaga livre.
+
+Cada vaga e recortada com transformacao de perspectiva para um quadrado padrao. Isso deixa os recortes mais parecidos com datasets como PKLot e CNRPark, que classificam vagas a partir de patches individuais.
+
+## Configuracao por cenario
+
+O projeto usa valores padrao internos e tambem aceita um arquivo:
+
+```text
+cenarios/<nome>/config.json
+```
+
+Existe um exemplo geral em `config.example.json`. Ao rodar `main.py`, tambem sera criado um `config.example.json` dentro da pasta do cenario, caso ainda nao exista.
+
+Principais parametros:
+
+```json
+{
+  "limiar_sobreposicao": 0.45,
+  "limiar_sobreposicao_sem_ponto_base": 0.75,
+  "limiar_linhas_livre": 0.18,
+  "limiar_linhas_livre_forte": 0.65,
+  "confianca_ocupada": 0.96,
+  "confianca_ocupada_sem_yolo": 0.995,
+  "confianca_livre": 0.90,
+  "permitir_ocupada_sem_yolo": false
+}
+```
+
+Significado:
+
+- `limiar_sobreposicao`: porcentagem minima da area da vaga coberta pela caixa do veiculo para marcar como ocupada quando a base do veiculo tambem cai na vaga. `0.45` significa 45% da vaga. Aumentar reduz falsos ocupados em vagas vizinhas, mas pode perder carros pequenos/parciais.
+- `limiar_sobreposicao_sem_ponto_base`: limite mais alto usado quando a caixa cobre a vaga, mas a base do veiculo nao caiu dentro dela. Isso reduz falso ocupado causado por caixa grande de carro vizinho.
+- `limiar_linhas_livre`: escore minimo de linhas visiveis para ajudar a marcar a vaga como livre. `0.18` significa que ha sinal suficiente de pintura/linha no recorte. Aumentar exige linhas mais claras; diminuir facilita marcar como livre, mas pode errar com carros brancos ou reflexos.
+- `limiar_linhas_livre_forte`: quando passa desse valor e a base do carro nao esta na vaga, a evidencia de vaga livre vence o classificador. Ajuda em vagas vazias com linhas muito visiveis.
+- `confianca_ocupada`: confianca minima do classificador para aceitar `occupied` quando tambem existe evidencia do YOLO. `0.96` exige 96% de confianca.
+- `confianca_ocupada_sem_yolo`: confianca minima para aceitar `occupied` sem apoio do YOLO, usada apenas se `permitir_ocupada_sem_yolo` for `true`.
+- `confianca_livre`: confianca minima do classificador para aceitar `empty`. `0.90` exige 90% de confianca. Aumentar evita falso livre; diminuir libera mais vagas.
+- `permitir_ocupada_sem_yolo`: quando `false`, o classificador sozinho nao marca vaga como ocupada. Isso e util quando o modelo ainda esta confundindo piso, placa ou linhas com carro.
+
+Outros parametros uteis:
+
+- `limiar_sobreposicao_associacao`: valor menor usado apenas para associar um veiculo a uma vaga quando o ponto inferior da caixa cai dentro dela.
+- `janela_suavizacao` e `min_ocupacoes_na_janela`: controlam quantos frames recentes precisam concordar para mudar o estado final.
+- `detectar_a_cada_n_frames`: reduz custo processando YOLO a cada N frames.
+- `tamanho_recorte_vaga`: tamanho do patch normalizado usado pelo classificador e pela analise de linhas.
+
+## Modo debug
+
+Para salvar frames anotados, recortes e um CSV com as evidencias:
+
+```powershell
+python main.py --cenario estacionamento_video --salvar-debug --debug-a-cada 30
+```
+
+Saidas:
+
+```text
+debug/<cenario>/
+  vagas_debug.csv
+  frames/
+  recortes/
+```
+
+Como interpretar `vagas_debug.csv`:
+
+- `estado_final`: resultado exibido apos suavizacao temporal.
+- `ocupada_agora`: decisao instantanea daquele frame antes da suavizacao.
+- `origem`: `C` = classificador, `Y` = YOLO, `L` = linhas da vaga, `-` = manteve estado anterior.
+- `classe_classificador` e `confianca_classificador`: saida do modelo de recorte.
+- `sobreposicao_yolo`: quanto da vaga foi coberta pela caixa do veiculo associado.
+- `ponto_inferior_na_vaga`: indica se a base da caixa do veiculo caiu dentro da vaga.
+- `escore_linhas`: forca das linhas detectadas no recorte; valores maiores indicam mais marcacao visivel.
+
+Para testar sem abrir janela e parar rapido:
+
+```powershell
+python main.py --cenario estacionamento_video --sem-janela --limite-frames 120 --salvar-debug
+```
 
 ## Treinando classificador de vagas
 
@@ -62,6 +154,28 @@ dataset/
   empty/
   occupied/
 ```
+
+Voce pode gerar recortes do seu proprio video para rotular:
+
+```powershell
+python exportar_recortes_vagas.py --cenario estacionamento_video --intervalo 30
+```
+
+Os recortes serao salvos em:
+
+```text
+dataset_recortes/<cenario>/sem_rotulo/
+```
+
+Revise visualmente esses arquivos e mova copias para:
+
+```text
+dataset/
+  empty/
+  occupied/
+```
+
+Use frames variados: vagas no sol, sombra, carros claros, carros escuros, vagas perto de arvores, vagas parcialmente ocluidas e exemplos dos erros que aparecerem no debug.
 
 prepare o dataset de treino/validacao:
 
@@ -85,6 +199,20 @@ Quando esse arquivo existir, o `main.py` usa duas evidencias para decidir se uma
 
 - deteccao de veiculo com YOLO;
 - classificacao do recorte da vaga como `occupied`.
+- linhas visiveis da vaga como apoio para casos incertos.
+
+## O que checar depois de ajustar
+
+Depois de qualquer mudanca de limiar ou treino do classificador:
+
+1. Rode `main.py --salvar-debug` em um trecho curto.
+2. Abra alguns frames em `debug/<cenario>/frames`.
+3. Confira no CSV se os erros vieram de `C`, `Y` ou `L`.
+4. Se muitas vagas vazias viram ocupadas por caixa de carro vizinha, aumente `limiar_sobreposicao`.
+5. Se carros pequenos ou distantes nao ocupam a vaga, reduza um pouco `limiar_sobreposicao` ou `limiar_sobreposicao_associacao`.
+6. Se vagas vazias em sombra nao sao reconhecidas como livres, reduza levemente `limiar_linhas_livre` ou inclua mais exemplos no classificador.
+7. Se carros brancos viram vaga livre por causa de linhas/reflexos, aumente `limiar_linhas_livre` e priorize exemplos desse tipo no treino.
+8. Se o classificador esta muito indeciso, acrescente recortes do proprio cenario e treine novamente.
 
 ## Estrutura dos cenarios
 
