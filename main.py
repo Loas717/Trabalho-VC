@@ -13,7 +13,6 @@ from visao_vagas import (
     analisar_linhas_vaga,
     carregar_config_cenario,
     recortar_vaga_normalizada,
-    salvar_config_exemplo,
 )
 
 
@@ -25,7 +24,7 @@ ALTURA_JANELA = 720
 def parse_args():
     parser = argparse.ArgumentParser(description="Detecta vagas livres e ocupadas em um cenario.")
     parser.add_argument("--cenario", help="Nome da pasta dentro de cenarios/ para evitar o menu interativo.")
-    parser.add_argument("--config", help="Caminho para um config.json alternativo.")
+    parser.add_argument("--config", help="Caminho para um JSON de configuracao alternativo.")
     parser.add_argument("--salvar-debug", action="store_true", help="Salva CSV, frames anotados e recortes analisados.")
     parser.add_argument("--debug-dir", default="debug", help="Pasta de saida do modo debug.")
     parser.add_argument("--debug-a-cada", type=int, default=30, help="Intervalo de frames para salvar imagens de debug.")
@@ -298,8 +297,6 @@ def main():
     args = parse_args()
     cenario = obter_cenario(args.cenario)
     config = carregar_config_cenario(cenario, args.config)
-    config_exemplo = salvar_config_exemplo(cenario)
-    print(f"Exemplo de configuracao disponivel em: {config_exemplo}")
 
     arquivo_coordenadas = cenario.coordenadas
     video_entrada = cenario.video

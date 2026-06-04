@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 
 
-CONFIG_PADRAO = {
+CONFIG_INICIAL_CENARIO = {
     "modelo_yolo": "yolo11s.pt",
     "modelo_classificador_vagas": "models/parking_occupancy_yolo11n_cls.pt",
     "classes_veiculos": [2, 3, 5, 7],
@@ -33,31 +33,36 @@ CONFIG_PADRAO = {
 }
 
 
-def carregar_config_cenario(cenario, caminho_config=None):
-    config = CONFIG_PADRAO.copy()
-    caminho = Path(caminho_config) if caminho_config else cenario.pasta / "config.json"
-
-    if caminho.exists():
-        with caminho.open("r", encoding="utf-8") as f:
-            config_usuario = json.load(f)
-        config.update(config_usuario)
-        print(f"Configuracao carregada: {caminho}")
-    else:
-        print(f"Configuracao especifica nao encontrada. Usando padrao interno.")
-
-    return config
+def caminho_config_cenario(cenario, caminho_config=None):
+    return Path(caminho_config) if caminho_config else cenario.pasta / "config.example.json"
 
 
-def salvar_config_exemplo(cenario):
-    caminho = cenario.pasta / "config.example.json"
+def salvar_config_exemplo(cenario, caminho_config=None):
+    caminho = caminho_config_cenario(cenario, caminho_config)
     if caminho.exists():
         return caminho
 
+    caminho.parent.mkdir(parents=True, exist_ok=True)
     with caminho.open("w", encoding="utf-8") as f:
-        json.dump(CONFIG_PADRAO, f, indent=2)
+        json.dump(CONFIG_INICIAL_CENARIO, f, indent=2)
         f.write("\n")
 
     return caminho
+
+
+def carregar_config_cenario(cenario, caminho_config=None):
+    caminho = salvar_config_exemplo(cenario, caminho_config)
+
+    with caminho.open("r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    chaves_ausentes = [chave for chave in CONFIG_INICIAL_CENARIO if chave not in config]
+    if chaves_ausentes:
+        chaves = ", ".join(chaves_ausentes)
+        raise KeyError(f"Configuracao incompleta em {caminho}. Chaves ausentes: {chaves}")
+
+    print(f"Configuracao carregada: {caminho}")
+    return config
 
 
 def ordenar_pontos_quadrilatero(pontos):

@@ -17,7 +17,7 @@
   "confianca_ocupada": 0.96,
   "confianca_ocupada_sem_yolo": 0.995,
   "confianca_livre": 0.9,
-  "limiar_laplaciano": 1.4,
+  "limiar_laplaciano": 1.5,
   "confianca_livre_fraca": 0.5,
   "margem_desempate_classificador": 0.08,
   "permitir_ocupada_sem_yolo": false,

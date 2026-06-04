@@ -71,13 +71,13 @@ Cada vaga e recortada com transformacao de perspectiva para um quadrado padrao. 
 
 ## Configuracao por cenario
 
-O projeto usa valores padrao internos e tambem aceita um arquivo:
+Cada cenario usa seu proprio arquivo de configuracao:
 
 ```text
-cenarios/<nome>/config.json
+cenarios/<nome>/config.example.json
 ```
 
-Existe um exemplo geral em `config.example.json`. Ao rodar `main.py`, tambem sera criado um `config.example.json` dentro da pasta do cenario, caso ainda nao exista.
+Ao rodar `main.py`, se esse arquivo ainda nao existir na pasta do cenario, ele sera criado automaticamente com os valores iniciais. Depois disso, a deteccao consome os parametros desse JSON especifico do cenario.
 
 Principais parametros:
 

@@ -11,7 +11,7 @@ from visao_vagas import carregar_config_cenario, recortar_vaga_normalizada
 def parse_args():
     parser = argparse.ArgumentParser(description="Exporta recortes normalizados das vagas para rotulagem.")
     parser.add_argument("--cenario", help="Nome da pasta dentro de cenarios/ para evitar o menu interativo.")
-    parser.add_argument("--config", help="Caminho para um config.json alternativo.")
+    parser.add_argument("--config", help="Caminho para um JSON de configuracao alternativo.")
     parser.add_argument("--saida", default="dataset_recortes", help="Pasta onde os recortes serao salvos.")
     parser.add_argument("--intervalo", type=int, default=30, help="Exporta um frame a cada N frames.")
     parser.add_argument("--inicio", type=int, default=1, help="Primeiro frame considerado.")
