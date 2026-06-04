@@ -29,7 +29,7 @@ O programa vai perguntar qual estacionamento/cenario voce quer editar.
 Na janela do seletor:
 
 - se `vagas_coordenadas.pkl` existir no cenario escolhido, as vagas salvas ja aparecem marcadas;
-- se `base.png` nao existir, ela sera criada automaticamente a partir do primeiro frame de `video.mp4`;
+- se `base.png` nao existir, ela sera criada automaticamente a partir do primeiro frame do video do cenario;
 - clique em 4 pontos para adicionar uma nova vaga;
 - arraste os pontos amarelos para editar uma vaga existente;
 - pressione `d` para apagar a vaga sob o mouse;
@@ -233,15 +233,18 @@ cenarios/
     video.mp4
     base.png
     vagas_coordenadas.pkl
+
+  rua_b/
+    14360955_3840_2160_30fps.mp4
 ```
 
 Arquivos esperados:
 
-- `video.mp4`: video usado na deteccao.
+- video do cenario: preferencialmente `video.mp4`, mas o sistema tambem reconhece automaticamente arquivos `.mp4`, `.avi`, `.mov` e `.mkv` dentro da pasta.
 - `base.png`: imagem usada pelo seletor para marcar as vagas. Se nao existir, o `selector.py` cria a partir do primeiro frame do video.
 - `vagas_coordenadas.pkl`: coordenadas das vagas daquele cenario. Se nao existir, o `selector.py` cria quando voce salvar.
 
-Para adicionar um novo estacionamento, crie uma pasta dentro de `cenarios/` e coloque o video como `video.mp4`. Depois rode:
+Para adicionar um novo estacionamento, crie uma pasta dentro de `cenarios/` e coloque o video dentro dela. Se houver mais de um video na mesma pasta, o sistema usa `video.mp4` primeiro; se ele nao existir, usa o primeiro video encontrado em ordem alfabetica. Depois rode:
 
 ```powershell
 python selector.py

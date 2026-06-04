@@ -6,6 +6,7 @@ CENARIOS_DIR = Path("cenarios")
 VIDEO_PADRAO = "video.mp4"
 IMAGEM_BASE_PADRAO = "base.png"
 COORDENADAS_PADRAO = "vagas_coordenadas.pkl"
+EXTENSOES_VIDEO = (".mp4", ".avi", ".mov", ".mkv")
 
 
 @dataclass
@@ -17,6 +18,19 @@ class Cenario:
     coordenadas: Path
 
 
+def encontrar_video(pasta):
+    video_padrao = pasta / VIDEO_PADRAO
+    if video_padrao.exists():
+        return video_padrao
+
+    videos = [
+        arquivo
+        for arquivo in sorted(pasta.iterdir())
+        if arquivo.is_file() and arquivo.suffix.lower() in EXTENSOES_VIDEO
+    ]
+    return videos[0] if videos else video_padrao
+
+
 def listar_cenarios():
     CENARIOS_DIR.mkdir(exist_ok=True)
     cenarios = []
@@ -25,7 +39,7 @@ def listar_cenarios():
         if not pasta.is_dir():
             continue
 
-        video = pasta / VIDEO_PADRAO
+        video = encontrar_video(pasta)
         imagem_base = pasta / IMAGEM_BASE_PADRAO
         coordenadas = pasta / COORDENADAS_PADRAO
 
@@ -48,7 +62,7 @@ def escolher_cenario(acao):
 
     if not cenarios:
         raise FileNotFoundError(
-            "Nenhum cenario encontrado. Crie uma pasta em 'cenarios/' com um arquivo 'video.mp4'."
+            "Nenhum cenario encontrado. Crie uma pasta em 'cenarios/' com um video .mp4, .avi, .mov ou .mkv."
         )
 
     print(f"\nEscolha o estacionamento para {acao}:\n")
