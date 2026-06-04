@@ -19,6 +19,7 @@ CONFIG_PADRAO = {
     "confianca_ocupada": 0.96,
     "confianca_ocupada_sem_yolo": 0.995,
     "confianca_livre": 0.90,
+    "limiar_laplaciano": 1.4,
     "confianca_livre_fraca": 0.50,
     "margem_desempate_classificador": 0.08,
     "permitir_ocupada_sem_yolo": False,

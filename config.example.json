@@ -14,6 +14,7 @@
   "confianca_livre": 0.9,
   "confianca_livre_fraca": 0.5,
   "margem_desempate_classificador": 0.08,
+  "limiar_laplaciano": 1.4,
   "permitir_ocupada_sem_yolo": false,
   "liberar_sem_evidencia_de_veiculo": true,
   "janela_suavizacao": 5,

@@ -11,14 +11,13 @@ from ultralytics import YOLO
 from cenarios import escolher_cenario, listar_cenarios
 from visao_vagas import (
     analisar_linhas_vaga,
-    associar_veiculos_vagas,
     carregar_config_cenario,
     recortar_vaga_normalizada,
     salvar_config_exemplo,
 )
 
 
-TITULO_JANELA = "Deteccao com YOLO"
+TITULO_JANELA = "Deteccao com Laplaciano"
 LARGURA_JANELA = 1280
 ALTURA_JANELA = 720
 
@@ -87,6 +86,51 @@ def converter_caixa_para_original(caixa, escala_x, escala_y):
     )
 
 
+def preparar_mascara_vagas(vagas, frame_shape):
+    masks = []
+    rects = []
+
+    for vaga in vagas:
+        vaga_poly = np.array(vaga, np.int32)
+        rect = cv2.boundingRect(vaga_poly)
+
+        mask = np.zeros((rect[3], rect[2]), dtype=np.uint8)
+        coordinates = vaga_poly - np.array([rect[0], rect[1]])
+        cv2.fillPoly(mask, [coordinates], 255)
+
+        masks.append(mask.astype(bool))
+        rects.append(rect)
+
+    return masks, rects
+
+
+def detectar_ocupacao_laplaciano(frame, vagas, config, cache):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 3)
+
+    if cache["masks"] is None:
+        cache["masks"], cache["rects"] = preparar_mascara_vagas(vagas, frame.shape)
+
+    associacoes = []
+    limiar = float(config["limiar_laplaciano"])
+
+    for rect, mask in zip(cache["rects"], cache["masks"]):
+        x, y, w, h = rect
+        roi_gray = blurred[y : y + h, x : x + w]
+        laplaciano = cv2.Laplacian(roi_gray, cv2.CV_64F)
+        valor = float(np.mean(np.abs(laplaciano * mask)))
+        ocupada = valor >= limiar
+
+        associacoes.append(
+            {
+                "ocupada_lap": ocupada,
+                "confianca_lap": valor,
+            }
+        )
+
+    return associacoes
+
+
 def analisar_recortes_vagas(frame, vagas, classificador_vagas, config):
     evidencias = []
     recortes = []
@@ -131,19 +175,15 @@ def analisar_recortes_vagas(frame, vagas, classificador_vagas, config):
 
 
 def decidir_ocupacao(evidencia, associacao, historico, config):
-    sobreposicao_yolo = associacao["sobreposicao"]
-    yolo_na_vaga = associacao["ponto_inferior_na_vaga"]
-    ocupada_yolo = (
-        (yolo_na_vaga and sobreposicao_yolo >= float(config["limiar_sobreposicao"]))
-        or sobreposicao_yolo >= float(config["limiar_sobreposicao_sem_ponto_base"])
-    )
+    ocupada_lap = associacao["ocupada_lap"]
+    confianca_lap = associacao["confianca_lap"]
 
     classe_cls = evidencia["classe_cls"]
     confianca_cls = evidencia["confianca_cls"]
     ocupada_cls = classe_cls == "occupied" and confianca_cls >= float(config["confianca_ocupada"])
-    permite_ocupada_sem_yolo = bool(config["permitir_ocupada_sem_yolo"])
-    ocupada_cls_sem_yolo = permite_ocupada_sem_yolo and (
-        classe_cls == "occupied" and confianca_cls >= float(config["confianca_ocupada_sem_yolo"])
+    permite_ocupada_sem_lap = bool(config.get("permitir_ocupada_sem_laplaciano", False))
+    ocupada_cls_sem_lap = permite_ocupada_sem_lap and (
+        classe_cls == "occupied" and confianca_cls >= float(config.get("confianca_ocupada_sem_laplaciano", config["confianca_ocupada"]))
     )
     livre_cls_forte = classe_cls == "empty" and confianca_cls >= float(config["confianca_livre"])
     livre_cls_fraco = classe_cls == "empty" and confianca_cls >= float(config["confianca_livre_fraca"])
@@ -151,32 +191,32 @@ def decidir_ocupacao(evidencia, associacao, historico, config):
     linhas_livre = escore_linhas >= float(config["limiar_linhas_livre"])
     linhas_livre_forte = escore_linhas >= float(config["limiar_linhas_livre_forte"])
 
-    if livre_cls_forte and not yolo_na_vaga:
-        return False, "C", ocupada_yolo, linhas_livre
+    if livre_cls_forte and not ocupada_lap:
+        return False, "C", ocupada_lap, linhas_livre
 
-    if linhas_livre_forte and not yolo_na_vaga:
-        return False, "L", ocupada_yolo, linhas_livre
+    if linhas_livre_forte and not ocupada_lap:
+        return False, "L", ocupada_lap, linhas_livre
 
-    if ocupada_cls and (ocupada_yolo or ocupada_cls_sem_yolo):
-        return True, "C", ocupada_yolo, linhas_livre
+    if ocupada_cls and (ocupada_lap or ocupada_cls_sem_lap):
+        return True, "C", ocupada_lap, linhas_livre
 
     if ocupada_cls and linhas_livre:
         margem = float(config["margem_desempate_classificador"])
-        if escore_linhas + margem >= confianca_cls and not yolo_na_vaga:
-            return False, "L", ocupada_yolo, linhas_livre
+        if escore_linhas + margem >= confianca_cls and not ocupada_lap:
+            return False, "L", ocupada_lap, linhas_livre
 
-    if ocupada_yolo and yolo_na_vaga:
-        return True, "Y", ocupada_yolo, linhas_livre
+    if ocupada_lap:
+        return True, "P", ocupada_lap, linhas_livre
 
     if linhas_livre:
-        return False, "L", ocupada_yolo, linhas_livre
+        return False, "L", ocupada_lap, linhas_livre
 
-    if config["liberar_sem_evidencia_de_veiculo"] and not ocupada_yolo and not ocupada_cls:
+    if config["liberar_sem_evidencia_de_veiculo"] and not ocupada_lap and not ocupada_cls:
         if classe_cls != "occupied" or livre_cls_fraco:
-            return False, "A", ocupada_yolo, linhas_livre
+            return False, "A", ocupada_lap, linhas_livre
 
     estado_anterior = bool(historico[-1]) if historico else False
-    return estado_anterior, "-", ocupada_yolo, linhas_livre
+    return estado_anterior, "-", ocupada_lap, linhas_livre
 
 
 def abrir_debug(args, cenario):
@@ -202,9 +242,8 @@ def abrir_debug(args, cenario):
             "classe_classificador",
             "confianca_classificador",
             "ocupada_classificador",
-            "sobreposicao_yolo",
-            "confianca_yolo",
-            "ponto_inferior_na_vaga",
+            "ocupada_laplaciano",
+            "valor_laplaciano",
             "linhas_livre",
             "escore_linhas",
             "densidade_marcacoes",
@@ -244,9 +283,8 @@ def salvar_debug_vaga(debug, numero_frame, idx, evidencia, associacao, ocupada_a
             "classe_classificador": evidencia["classe_cls"],
             "confianca_classificador": f"{evidencia['confianca_cls']:.4f}",
             "ocupada_classificador": int(evidencia["ocupada_cls"]),
-            "sobreposicao_yolo": f"{associacao['sobreposicao']:.4f}",
-            "confianca_yolo": f"{associacao['confianca']:.4f}",
-            "ponto_inferior_na_vaga": int(associacao["ponto_inferior_na_vaga"]),
+            "ocupada_laplaciano": int(associacao["ocupada_lap"]),
+            "valor_laplaciano": f"{associacao['confianca_lap']:.4f}",
             "linhas_livre": int(linhas_livre),
             "escore_linhas": f"{linhas['escore']:.4f}",
             "densidade_marcacoes": f"{linhas['densidade_marcacoes']:.4f}",
@@ -274,11 +312,10 @@ def main():
             f"Coordenadas nao encontradas: {arquivo_coordenadas}. Rode primeiro: python selector.py"
         )
 
-    model = YOLO(config["modelo_yolo"])
     caminho_classificador = Path(config["modelo_classificador_vagas"])
     classificador_vagas = YOLO(str(caminho_classificador)) if caminho_classificador.exists() else None
     if classificador_vagas is None:
-        print(f"Classificador de vagas nao encontrado em {caminho_classificador}. Usando YOLO + linhas.")
+        print(f"Classificador de vagas nao encontrado em {caminho_classificador}. Usando Laplaciano + linhas.")
     else:
         print(f"Classificador de vagas carregado: {caminho_classificador}")
 
@@ -296,14 +333,20 @@ def main():
     fps_video = video.get(cv2.CAP_PROP_FPS) or 30
     tempo_ultimo_frame = cv2.getTickCount()
     numero_frame = 0
-    deteccoes_atuais = []
+    motion_cache = {"masks": None, "rects": None}
     evidencias_vagas = analisar_recortes_vagas(
         np.zeros((10, 10, 3), dtype=np.uint8),
         [],
         classificador_vagas,
         config,
     )
-    associacoes_vagas = []
+    associacoes_vagas = [
+        {
+            "ocupada_lap": False,
+            "confianca_lap": 0.0,
+        }
+        for _ in vagas_pos
+    ]
 
     try:
         while True:
@@ -324,50 +367,8 @@ def main():
 
             intervalo_deteccao = max(1, int(config["detectar_a_cada_n_frames"]))
             if numero_frame == 1 or numero_frame % intervalo_deteccao == 0:
-                frame_inferencia, escala_x_inferencia, escala_y_inferencia = preparar_para_inferencia(
-                    frame,
-                    int(config["largura_inferencia"]),
-                )
-
-                results = model.predict(
-                    frame_inferencia,
-                    classes=config["classes_veiculos"],
-                    conf=float(config["confianca_minima_yolo"]),
-                    iou=float(config["iou_yolo"]),
-                    verbose=False,
-                )
-
-                deteccoes_atuais = []
                 evidencias_vagas = analisar_recortes_vagas(frame, vagas_pos, classificador_vagas, config)
-
-                for r in results:
-                    for box, conf in zip(r.boxes.xyxy, r.boxes.conf):
-                        caixa_original = converter_caixa_para_original(
-                            tuple(map(int, box)),
-                            escala_x_inferencia,
-                            escala_y_inferencia,
-                        )
-                        deteccoes_atuais.append((caixa_original, float(conf)))
-
-                associacoes_vagas = associar_veiculos_vagas(
-                    vagas_pos,
-                    deteccoes_atuais,
-                    frame.shape,
-                    limiar_associacao=float(config["limiar_sobreposicao_associacao"]),
-                )
-
-            for caixa_original, conf in deteccoes_atuais:
-                x1, y1, x2, y2 = caixa_original
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                cv2.putText(
-                    frame,
-                    f"VEICULO {conf:.2f}",
-                    (x1, max(20, y1 - 10)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 0, 255),
-                    2,
-                )
+                associacoes_vagas = detectar_ocupacao_laplaciano(frame, vagas_pos, config, motion_cache)
 
             vagas_livres = 0
             vagas_ocupadas = 0
@@ -376,14 +377,11 @@ def main():
                 vaga_poly = np.array(vaga, np.int32)
                 evidencia = evidencias_vagas[idx]
                 associacao = associacoes_vagas[idx] if associacoes_vagas else {
-                    "sobreposicao": 0.0,
-                    "score": 0.0,
-                    "confianca": 0.0,
-                    "ponto_inferior_na_vaga": False,
-                    "caixa": None,
+                    "ocupada_lap": False,
+                    "confianca_lap": 0.0,
                 }
 
-                ocupada_agora, origem, ocupada_yolo, linhas_livre = decidir_ocupacao(
+                ocupada_agora, origem, ocupada_lap, linhas_livre = decidir_ocupacao(
                     evidencia,
                     associacao,
                     historico_vagas[idx],
@@ -405,7 +403,7 @@ def main():
                 x, y, _, _ = cv2.boundingRect(vaga_poly)
                 label = (
                     f"V{idx + 1} {origem} {evidencia['classe_cls'][:3]} {evidencia['confianca_cls']:.2f} "
-                    f"ov {associacao['sobreposicao']:.2f} ln {evidencia['linhas']['escore']:.2f}"
+                    f"lap {associacao['confianca_lap']:.2f} ln {evidencia['linhas']['escore']:.2f}"
                 )
                 cv2.putText(frame, label, (x, max(20, y - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
