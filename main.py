@@ -6,27 +6,26 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
 
 from cenarios import escolher_cenario, listar_cenarios
 from visao_vagas import (
-    analisar_linhas_vaga,
-    associar_veiculos_vagas,
+    analisar_vagas_por_subtracao,
     carregar_config_cenario,
-    recortar_vaga_normalizada,
+    preparar_bases_vagas,
     salvar_config_exemplo,
 )
 
 
-TITULO_JANELA = "Deteccao com YOLO"
+TITULO_JANELA = "Deteccao por subtracao de fundo"
 LARGURA_JANELA = 1280
 ALTURA_JANELA = 720
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Detecta vagas livres e ocupadas em um cenario.")
+    parser = argparse.ArgumentParser(description="Detecta vagas livres e ocupadas por subtracao de fundo.")
     parser.add_argument("--cenario", help="Nome da pasta dentro de cenarios/ para evitar o menu interativo.")
     parser.add_argument("--config", help="Caminho para um config.json alternativo.")
+    parser.add_argument("--base", help="Imagem base alternativa, util para testar uma base sem carros.")
     parser.add_argument("--salvar-debug", action="store_true", help="Salva CSV, frames anotados e recortes analisados.")
     parser.add_argument("--debug-dir", default="debug", help="Pasta de saida do modo debug.")
     parser.add_argument("--debug-a-cada", type=int, default=30, help="Intervalo de frames para salvar imagens de debug.")
@@ -63,120 +62,41 @@ def preparar_para_exibir(frame, escala):
     return canvas
 
 
-def preparar_para_inferencia(frame, largura_inferencia):
-    altura, largura = frame.shape[:2]
-    if largura <= largura_inferencia:
-        return frame, 1.0, 1.0
+def carregar_base(cenario, caminho_base=None):
+    caminho = Path(caminho_base) if caminho_base else cenario.imagem_base
 
-    escala = largura_inferencia / largura
-    nova_largura = int(largura * escala)
-    nova_altura = int(altura * escala)
-    frame_redimensionado = cv2.resize(frame, (nova_largura, nova_altura), interpolation=cv2.INTER_AREA)
-    escala_x = largura / nova_largura
-    escala_y = altura / nova_altura
-    return frame_redimensionado, escala_x, escala_y
-
-
-def converter_caixa_para_original(caixa, escala_x, escala_y):
-    x1, y1, x2, y2 = caixa
-    return (
-        int(x1 * escala_x),
-        int(y1 * escala_y),
-        int(x2 * escala_x),
-        int(y2 * escala_y),
-    )
-
-
-def analisar_recortes_vagas(frame, vagas, classificador_vagas, config):
-    evidencias = []
-    recortes = []
-    indices_validos = []
-    tamanho_recorte = int(config["tamanho_recorte_vaga"])
-
-    for idx, vaga in enumerate(vagas):
-        recorte = recortar_vaga_normalizada(frame, vaga, tamanho=tamanho_recorte)
-        linhas = analisar_linhas_vaga(recorte)
-        evidencias.append(
-            {
-                "recorte": recorte,
-                "ocupada_cls": False,
-                "confianca_cls": 0.0,
-                "classe_cls": "sem_modelo" if classificador_vagas is None else "sem_recorte",
-                "linhas": linhas,
-            }
+    if not caminho.exists():
+        raise FileNotFoundError(
+            f"Imagem base nao encontrada: {caminho}. "
+            "Use uma imagem do estacionamento vazio como base.png ou rode python selector.py para cria-la."
         )
 
-        if recorte is not None:
-            recortes.append(recorte)
-            indices_validos.append(idx)
+    frame_base = cv2.imread(str(caminho))
+    if frame_base is None:
+        raise FileNotFoundError(f"Nao foi possivel carregar a imagem base: {caminho}")
 
-    if classificador_vagas is None or not recortes:
-        return evidencias
-
-    resultados = classificador_vagas.predict(recortes, imgsz=tamanho_recorte, verbose=False)
-    for idx, resultado in zip(indices_validos, resultados):
-        nomes = resultado.names
-        classe_id = int(resultado.probs.top1)
-        confianca = float(resultado.probs.top1conf)
-        classe_nome = nomes[classe_id].lower()
-        evidencias[idx].update(
-            {
-                "ocupada_cls": classe_nome == "occupied" and confianca >= float(config["confianca_ocupada"]),
-                "confianca_cls": confianca,
-                "classe_cls": classe_nome,
-            }
-        )
-
-    return evidencias
+    print(f"Imagem base carregada: {caminho}")
+    return frame_base
 
 
-def decidir_ocupacao(evidencia, associacao, historico, config):
-    sobreposicao_yolo = associacao["sobreposicao"]
-    yolo_na_vaga = associacao["ponto_inferior_na_vaga"]
-    ocupada_yolo = (
-        (yolo_na_vaga and sobreposicao_yolo >= float(config["limiar_sobreposicao"]))
-        or sobreposicao_yolo >= float(config["limiar_sobreposicao_sem_ponto_base"])
-    )
+def escalar_vagas(vagas, tamanho_origem, tamanho_destino):
+    altura_origem, largura_origem = tamanho_origem[:2]
+    altura_destino, largura_destino = tamanho_destino[:2]
 
-    classe_cls = evidencia["classe_cls"]
-    confianca_cls = evidencia["confianca_cls"]
-    ocupada_cls = classe_cls == "occupied" and confianca_cls >= float(config["confianca_ocupada"])
-    permite_ocupada_sem_yolo = bool(config["permitir_ocupada_sem_yolo"])
-    ocupada_cls_sem_yolo = permite_ocupada_sem_yolo and (
-        classe_cls == "occupied" and confianca_cls >= float(config["confianca_ocupada_sem_yolo"])
-    )
-    livre_cls_forte = classe_cls == "empty" and confianca_cls >= float(config["confianca_livre"])
-    livre_cls_fraco = classe_cls == "empty" and confianca_cls >= float(config["confianca_livre_fraca"])
-    escore_linhas = evidencia["linhas"]["escore"]
-    linhas_livre = escore_linhas >= float(config["limiar_linhas_livre"])
-    linhas_livre_forte = escore_linhas >= float(config["limiar_linhas_livre_forte"])
+    if (altura_origem, largura_origem) == (altura_destino, largura_destino):
+        return vagas
 
-    if livre_cls_forte and not yolo_na_vaga:
-        return False, "C", ocupada_yolo, linhas_livre
+    escala_x = largura_destino / largura_origem
+    escala_y = altura_destino / altura_origem
+    vagas_escaladas = []
 
-    if linhas_livre_forte and not yolo_na_vaga:
-        return False, "L", ocupada_yolo, linhas_livre
+    for vaga in vagas:
+        vagas_escaladas.append([
+            (int(round(x * escala_x)), int(round(y * escala_y)))
+            for x, y in vaga
+        ])
 
-    if ocupada_cls and (ocupada_yolo or ocupada_cls_sem_yolo):
-        return True, "C", ocupada_yolo, linhas_livre
-
-    if ocupada_cls and linhas_livre:
-        margem = float(config["margem_desempate_classificador"])
-        if escore_linhas + margem >= confianca_cls and not yolo_na_vaga:
-            return False, "L", ocupada_yolo, linhas_livre
-
-    if ocupada_yolo and yolo_na_vaga:
-        return True, "Y", ocupada_yolo, linhas_livre
-
-    if linhas_livre:
-        return False, "L", ocupada_yolo, linhas_livre
-
-    if config["liberar_sem_evidencia_de_veiculo"] and not ocupada_yolo and not ocupada_cls:
-        if classe_cls != "occupied" or livre_cls_fraco:
-            return False, "A", ocupada_yolo, linhas_livre
-
-    estado_anterior = bool(historico[-1]) if historico else False
-    return estado_anterior, "-", ocupada_yolo, linhas_livre
+    return vagas_escaladas
 
 
 def abrir_debug(args, cenario):
@@ -186,8 +106,12 @@ def abrir_debug(args, cenario):
     pasta = Path(args.debug_dir) / cenario.nome
     pasta_frames = pasta / "frames"
     pasta_recortes = pasta / "recortes"
+    pasta_mascaras = pasta / "mascaras"
+    pasta_diffs = pasta / "diffs"
     pasta_frames.mkdir(parents=True, exist_ok=True)
     pasta_recortes.mkdir(parents=True, exist_ok=True)
+    pasta_mascaras.mkdir(parents=True, exist_ok=True)
+    pasta_diffs.mkdir(parents=True, exist_ok=True)
 
     csv_path = pasta / "vagas_debug.csv"
     csv_file = csv_path.open("w", newline="", encoding="utf-8")
@@ -198,27 +122,20 @@ def abrir_debug(args, cenario):
             "vaga",
             "estado_final",
             "ocupada_agora",
-            "origem",
-            "classe_classificador",
-            "confianca_classificador",
-            "ocupada_classificador",
-            "sobreposicao_yolo",
-            "confianca_yolo",
-            "ponto_inferior_na_vaga",
-            "linhas_livre",
-            "escore_linhas",
-            "densidade_marcacoes",
-            "densidade_linhas",
-            "quantidade_linhas",
+            "decisao",
+            "proporcao_mudanca",
+            "media_diferenca",
+            "pixels_alterados",
         ],
     )
     writer.writeheader()
 
     print(f"Debug sera salvo em: {pasta}")
     return {
-        "pasta": pasta,
         "frames": pasta_frames,
         "recortes": pasta_recortes,
+        "mascaras": pasta_mascaras,
+        "diffs": pasta_diffs,
         "csv_file": csv_file,
         "writer": writer,
     }
@@ -229,31 +146,57 @@ def fechar_debug(debug):
         debug["csv_file"].close()
 
 
-def salvar_debug_vaga(debug, numero_frame, idx, evidencia, associacao, ocupada_agora, ocupada, origem, linhas_livre):
+def decidir_ocupacao_por_subtracao(evidencia, historico, config):
+    proporcao = float(evidencia["proporcao_mudanca"])
+    media = float(evidencia["media_diferenca"])
+
+    if (
+        proporcao >= float(config["limiar_ocupacao"])
+        and media >= float(config["limiar_diferenca_media"])
+    ):
+        return True, "ocupada"
+
+    if (
+        proporcao <= float(config["limiar_livre"])
+        or media <= float(config["limiar_diferenca_media_livre"])
+    ):
+        return False, "livre"
+
+    estado_anterior = bool(historico[-1]) if historico else False
+    return estado_anterior, "mantida"
+
+
+def salvar_debug_vaga(debug, numero_frame, idx, evidencia, ocupada_agora, ocupada, decisao):
     if not debug:
         return
 
-    linhas = evidencia["linhas"]
     debug["writer"].writerow(
         {
             "frame": numero_frame,
             "vaga": idx + 1,
             "estado_final": "ocupada" if ocupada else "livre",
             "ocupada_agora": int(ocupada_agora),
-            "origem": origem,
-            "classe_classificador": evidencia["classe_cls"],
-            "confianca_classificador": f"{evidencia['confianca_cls']:.4f}",
-            "ocupada_classificador": int(evidencia["ocupada_cls"]),
-            "sobreposicao_yolo": f"{associacao['sobreposicao']:.4f}",
-            "confianca_yolo": f"{associacao['confianca']:.4f}",
-            "ponto_inferior_na_vaga": int(associacao["ponto_inferior_na_vaga"]),
-            "linhas_livre": int(linhas_livre),
-            "escore_linhas": f"{linhas['escore']:.4f}",
-            "densidade_marcacoes": f"{linhas['densidade_marcacoes']:.4f}",
-            "densidade_linhas": f"{linhas['densidade_linhas']:.4f}",
-            "quantidade_linhas": linhas["quantidade_linhas"],
+            "decisao": decisao,
+            "proporcao_mudanca": f"{evidencia['proporcao_mudanca']:.4f}",
+            "media_diferenca": f"{evidencia['media_diferenca']:.4f}",
+            "pixels_alterados": evidencia["pixels_alterados"],
         }
     )
+
+
+def salvar_debug_imagens(debug, numero_frame, idx, evidencia, ocupada, debug_a_cada):
+    if not debug or numero_frame % max(1, debug_a_cada) != 0:
+        return
+
+    estado = "ocupada" if ocupada else "livre"
+    nome = f"frame_{numero_frame:06d}_vaga_{idx + 1:03d}_{estado}"
+
+    if evidencia["recorte"] is not None:
+        cv2.imwrite(str(debug["recortes"] / f"{nome}.jpg"), evidencia["recorte"])
+    if evidencia["mascara"] is not None:
+        cv2.imwrite(str(debug["mascaras"] / f"{nome}.png"), evidencia["mascara"])
+    if evidencia["diff"] is not None:
+        cv2.imwrite(str(debug["diffs"] / f"{nome}.png"), evidencia["diff"])
 
 
 def main():
@@ -263,32 +206,26 @@ def main():
     config_exemplo = salvar_config_exemplo(cenario)
     print(f"Exemplo de configuracao disponivel em: {config_exemplo}")
 
-    arquivo_coordenadas = cenario.coordenadas
-    video_entrada = cenario.video
+    if not cenario.video.exists():
+        raise FileNotFoundError(f"Video do cenario nao encontrado: {cenario.video}")
 
-    if not video_entrada.exists():
-        raise FileNotFoundError(f"Video do cenario nao encontrado: {video_entrada}")
-
-    if not arquivo_coordenadas.exists():
+    if not cenario.coordenadas.exists():
         raise FileNotFoundError(
-            f"Coordenadas nao encontradas: {arquivo_coordenadas}. Rode primeiro: python selector.py"
+            f"Coordenadas nao encontradas: {cenario.coordenadas}. Rode primeiro: python selector.py"
         )
 
-    model = YOLO(config["modelo_yolo"])
-    caminho_classificador = Path(config["modelo_classificador_vagas"])
-    classificador_vagas = YOLO(str(caminho_classificador)) if caminho_classificador.exists() else None
-    if classificador_vagas is None:
-        print(f"Classificador de vagas nao encontrado em {caminho_classificador}. Usando YOLO + linhas.")
-    else:
-        print(f"Classificador de vagas carregado: {caminho_classificador}")
+    frame_base = carregar_base(cenario, args.base)
+    with cenario.coordenadas.open("rb") as f:
+        vagas_base = pickle.load(f)
 
-    with arquivo_coordenadas.open("rb") as f:
-        vagas_pos = pickle.load(f)
+    recortes_base = preparar_bases_vagas(frame_base, vagas_base, config)
+    if any(recorte is None for recorte in recortes_base):
+        raise RuntimeError("Nao foi possivel gerar todos os recortes da imagem base. Confira as coordenadas das vagas.")
 
-    video = cv2.VideoCapture(str(video_entrada))
+    video = cv2.VideoCapture(str(cenario.video))
     historico_vagas = [
         deque(maxlen=int(config["janela_suavizacao"]))
-        for _ in vagas_pos
+        for _ in vagas_base
     ]
     debug = abrir_debug(args, cenario)
 
@@ -296,14 +233,16 @@ def main():
     fps_video = video.get(cv2.CAP_PROP_FPS) or 30
     tempo_ultimo_frame = cv2.getTickCount()
     numero_frame = 0
-    deteccoes_atuais = []
-    evidencias_vagas = analisar_recortes_vagas(
-        np.zeros((10, 10, 3), dtype=np.uint8),
-        [],
-        classificador_vagas,
-        config,
+    evidencias_vagas = []
+    vagas_frame = None
+
+    print("Metodo de deteccao: subtracao entre a imagem base e o frame atual por vaga.")
+    print(
+        "Limiar: "
+        f"{config['limiar_ocupacao']:.2f} para ocupar, "
+        f"{config['limiar_livre']:.2f} para liberar, "
+        f"diferenca media minima {config['limiar_diferenca_media']:.3f}."
     )
-    associacoes_vagas = []
 
     try:
         while True:
@@ -315,122 +254,63 @@ def main():
             if args.limite_frames and numero_frame > args.limite_frames:
                 break
 
+            if vagas_frame is None:
+                vagas_frame = escalar_vagas(vagas_base, frame_base.shape, frame.shape)
+                if frame.shape[:2] != frame_base.shape[:2]:
+                    print(
+                        "Aviso: video e base tem resolucoes diferentes. "
+                        f"Video: {frame.shape[1]}x{frame.shape[0]}, "
+                        f"base: {frame_base.shape[1]}x{frame_base.shape[0]}. "
+                        "As coordenadas foram escaladas para o video."
+                    )
+
             if escala_visualizacao is None:
                 escala_visualizacao = calcular_escala_visualizacao(frame)
                 if not args.sem_janela:
                     cv2.namedWindow(TITULO_JANELA, cv2.WINDOW_NORMAL)
                     cv2.resizeWindow(TITULO_JANELA, LARGURA_JANELA, ALTURA_JANELA)
-                print(f"Janela da deteccao em {LARGURA_JANELA}x{ALTURA_JANELA}. Processamento no tamanho original.")
+                print(f"Janela da deteccao em {LARGURA_JANELA}x{ALTURA_JANELA}.")
 
-            intervalo_deteccao = max(1, int(config["detectar_a_cada_n_frames"]))
-            if numero_frame == 1 or numero_frame % intervalo_deteccao == 0:
-                frame_inferencia, escala_x_inferencia, escala_y_inferencia = preparar_para_inferencia(
-                    frame,
-                    int(config["largura_inferencia"]),
-                )
-
-                results = model.predict(
-                    frame_inferencia,
-                    classes=config["classes_veiculos"],
-                    conf=float(config["confianca_minima_yolo"]),
-                    iou=float(config["iou_yolo"]),
-                    verbose=False,
-                )
-
-                deteccoes_atuais = []
-                evidencias_vagas = analisar_recortes_vagas(frame, vagas_pos, classificador_vagas, config)
-
-                for r in results:
-                    for box, conf in zip(r.boxes.xyxy, r.boxes.conf):
-                        caixa_original = converter_caixa_para_original(
-                            tuple(map(int, box)),
-                            escala_x_inferencia,
-                            escala_y_inferencia,
-                        )
-                        deteccoes_atuais.append((caixa_original, float(conf)))
-
-                associacoes_vagas = associar_veiculos_vagas(
-                    vagas_pos,
-                    deteccoes_atuais,
-                    frame.shape,
-                    limiar_associacao=float(config["limiar_sobreposicao_associacao"]),
-                )
-
-            for caixa_original, conf in deteccoes_atuais:
-                x1, y1, x2, y2 = caixa_original
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                cv2.putText(
-                    frame,
-                    f"VEICULO {conf:.2f}",
-                    (x1, max(20, y1 - 10)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 0, 255),
-                    2,
-                )
+            intervalo_analise = max(1, int(config["analisar_a_cada_n_frames"]))
+            if numero_frame == 1 or numero_frame % intervalo_analise == 0:
+                evidencias_vagas = analisar_vagas_por_subtracao(frame, recortes_base, vagas_frame, config)
 
             vagas_livres = 0
             vagas_ocupadas = 0
 
-            for idx, vaga in enumerate(vagas_pos):
+            for idx, vaga in enumerate(vagas_frame):
                 vaga_poly = np.array(vaga, np.int32)
                 evidencia = evidencias_vagas[idx]
-                associacao = associacoes_vagas[idx] if associacoes_vagas else {
-                    "sobreposicao": 0.0,
-                    "score": 0.0,
-                    "confianca": 0.0,
-                    "ponto_inferior_na_vaga": False,
-                    "caixa": None,
-                }
-
-                ocupada_agora, origem, ocupada_yolo, linhas_livre = decidir_ocupacao(
+                ocupada_agora, decisao = decidir_ocupacao_por_subtracao(
                     evidencia,
-                    associacao,
                     historico_vagas[idx],
                     config,
                 )
+
                 if not historico_vagas[idx]:
                     historico_vagas[idx].extend([ocupada_agora] * int(config["janela_suavizacao"]))
                 else:
                     historico_vagas[idx].append(ocupada_agora)
-                ocupada = sum(historico_vagas[idx]) >= int(config["min_ocupacoes_na_janela"])
 
-                color = (0, 0, 255) if ocupada else (0, 255, 0)
+                ocupada = sum(historico_vagas[idx]) >= int(config["min_ocupacoes_na_janela"])
+                cor = (0, 0, 255) if ocupada else (0, 255, 0)
+
                 if ocupada:
                     vagas_ocupadas += 1
                 else:
                     vagas_livres += 1
 
-                cv2.polylines(frame, [vaga_poly], True, color, 2)
-                x, y, _, _ = cv2.boundingRect(vaga_poly)
-                label = (
-                    f"V{idx + 1} {origem} {evidencia['classe_cls'][:3]} {evidencia['confianca_cls']:.2f} "
-                    f"ov {associacao['sobreposicao']:.2f} ln {evidencia['linhas']['escore']:.2f}"
-                )
-                cv2.putText(frame, label, (x, max(20, y - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
-
-                salvar_debug_vaga(
-                    debug,
-                    numero_frame,
-                    idx,
-                    evidencia,
-                    associacao,
-                    ocupada_agora,
-                    ocupada,
-                    origem,
-                    linhas_livre,
-                )
-
-                if (
-                    debug
-                    and numero_frame % max(1, args.debug_a_cada) == 0
-                    and evidencia["recorte"] is not None
-                ):
-                    nome_recorte = (
-                        f"frame_{numero_frame:06d}_vaga_{idx + 1:03d}_"
-                        f"{'ocupada' if ocupada else 'livre'}_{origem}.jpg"
+                cv2.polylines(frame, [vaga_poly], True, cor, int(config["espessura_poligono"]))
+                if bool(config["mostrar_labels_vagas"]):
+                    x, y, _, _ = cv2.boundingRect(vaga_poly)
+                    label = (
+                        f"V{idx + 1} {decisao[:1].upper()} diff {evidencia['proporcao_mudanca']:.2f} "
+                        f"med {evidencia['media_diferenca']:.2f}"
                     )
-                    cv2.imwrite(str(debug["recortes"] / nome_recorte), evidencia["recorte"])
+                    cv2.putText(frame, label, (x, max(20, y - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, cor, 1)
+
+                salvar_debug_vaga(debug, numero_frame, idx, evidencia, ocupada_agora, ocupada, decisao)
+                salvar_debug_imagens(debug, numero_frame, idx, evidencia, ocupada, args.debug_a_cada)
 
             cv2.putText(frame, f"Vagas Livres: {vagas_livres}", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
             cv2.putText(frame, f"Vagas Ocupadas: {vagas_ocupadas}", (30, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)

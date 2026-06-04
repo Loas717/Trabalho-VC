@@ -12,7 +12,5 @@
   "min_ocupacoes_na_janela": 4,
   "analisar_a_cada_n_frames": 2,
   "pular_frames": true,
-  "tamanho_recorte_vaga": 160,
-  "mostrar_labels_vagas": true,
-  "espessura_poligono": 2
+  "tamanho_recorte_vaga": 160
 }

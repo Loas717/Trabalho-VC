@@ -1,8 +1,6 @@
 import shutil
 from pathlib import Path
 
-from ultralytics import YOLO
-
 
 DATASET = Path("dataset_parking_cls")
 MODELO_BASE = "yolo11n-cls.pt"
@@ -14,6 +12,14 @@ def main():
         raise FileNotFoundError(
             f"Dataset preparado nao encontrado: {DATASET}. Rode primeiro: python preparar_dataset_classificacao.py"
         )
+
+    try:
+        from ultralytics import YOLO
+    except ImportError as exc:
+        raise ImportError(
+            "O fluxo principal do projeto nao usa YOLO. "
+            "Para treinar este classificador legado, instale manualmente: pip install ultralytics"
+        ) from exc
 
     model = YOLO(MODELO_BASE)
     resultados = model.train(

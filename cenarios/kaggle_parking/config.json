@@ -1,0 +1,18 @@
+{
+  "limiar_pixels_diferentes": 24,
+  "limiar_ocupacao": 0.16,
+  "limiar_livre": 0.08,
+  "limiar_diferenca_media": 0.03,
+  "limiar_diferenca_media_livre": 0.018,
+  "normalizar_iluminacao": true,
+  "blur_kernel": 5,
+  "morfologia_kernel": 3,
+  "morfologia_iteracoes": 1,
+  "janela_suavizacao": 5,
+  "min_ocupacoes_na_janela": 4,
+  "analisar_a_cada_n_frames": 2,
+  "pular_frames": true,
+  "tamanho_recorte_vaga": 96,
+  "mostrar_labels_vagas": false,
+  "espessura_poligono": 1
+}

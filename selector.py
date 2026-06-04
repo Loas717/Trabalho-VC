@@ -1,21 +1,48 @@
+import argparse
 import cv2
 import pickle
 import numpy as np
-from cenarios import escolher_cenario
+from pathlib import Path
+
+from cenarios import escolher_cenario, listar_cenarios
 
 TITULO_JANELA = "Editor de vagas"
 RAIO_SELECAO = 12
 LARGURA_JANELA = 1280
 ALTURA_JANELA = 720
+PASSO_MOVIMENTO = 2
+PASSO_MOVIMENTO_RAPIDO = 10
 
-cenario = escolher_cenario("editar as vagas")
+def parse_args():
+    parser = argparse.ArgumentParser(description="Editor de poligonos das vagas.")
+    parser.add_argument("--cenario", help="Nome da pasta dentro de cenarios/ para evitar o menu interativo.")
+    parser.add_argument("--base", help="Imagem base alternativa para marcar as vagas.")
+    return parser.parse_args()
+
+
+def obter_cenario(nome):
+    if not nome:
+        return escolher_cenario("editar as vagas")
+
+    for cenario in listar_cenarios():
+        if cenario.nome == nome:
+            print(f"Cenario selecionado: {cenario.nome}\n")
+            return cenario
+
+    raise FileNotFoundError(f"Cenario '{nome}' nao encontrado em cenarios/.")
+
+
+args = parse_args()
+cenario = obter_cenario(args.cenario)
 ARQUIVO_COORDENADAS = cenario.coordenadas
-IMAGEM_BASE = cenario.imagem_base
+IMAGEM_BASE = Path(args.base) if args.base else cenario.imagem_base
+BASE_CUSTOMIZADA = args.base is not None
 VIDEO_ENTRADA = cenario.video
 
 vagas = []
 vaga_atual = []
 ponto_arrastando = None
+vaga_selecionada = None
 mouse_pos = (0, 0)
 escala_visualizacao = 1.0
 offset_x_visualizacao = 0
@@ -43,6 +70,9 @@ def salvar_vagas():
 def criar_imagem_base_pelo_video():
     if IMAGEM_BASE.exists():
         return
+
+    if BASE_CUSTOMIZADA:
+        raise FileNotFoundError(f"Imagem base alternativa nao encontrada: {IMAGEM_BASE}")
 
     if not VIDEO_ENTRADA.exists():
         raise FileNotFoundError(
@@ -76,6 +106,107 @@ def encontrar_vaga_sob_mouse(x, y):
         if cv2.pointPolygonTest(vaga_poly, (x, y), False) >= 0:
             return vaga_idx
     return None
+
+
+def limitar_ponto_imagem(x, y):
+    largura_original = img.shape[1] - 1
+    altura_original = img.shape[0] - 1
+    return (
+        max(0, min(largura_original, int(round(x)))),
+        max(0, min(altura_original, int(round(y)))),
+    )
+
+
+def selecionar_vaga(vaga_idx):
+    global vaga_selecionada
+    vaga_selecionada = vaga_idx
+    if vaga_idx is not None:
+        print(f"Vaga {vaga_idx + 1} selecionada.")
+
+
+def mover_vaga(vaga_idx, dx, dy):
+    if vaga_idx is None or not (0 <= vaga_idx < len(vagas)):
+        print("Nenhuma vaga selecionada para mover.")
+        return
+
+    vagas[vaga_idx] = [
+        limitar_ponto_imagem(px + dx, py + dy)
+        for px, py in vagas[vaga_idx]
+    ]
+
+
+def copiar_vaga_para_mouse():
+    global vaga_selecionada
+    origem_idx = vaga_selecionada
+
+    if origem_idx is None:
+        origem_idx = encontrar_vaga_sob_mouse(*mouse_pos)
+
+    if origem_idx is None and vagas:
+        origem_idx = len(vagas) - 1
+
+    if origem_idx is None:
+        print("Nenhuma vaga para copiar. Marque uma vaga primeiro.")
+        return
+
+    vaga = vagas[origem_idx]
+    centro = np.mean(np.array(vaga, dtype=np.float32), axis=0)
+    dx = mouse_pos[0] - centro[0]
+    dy = mouse_pos[1] - centro[1]
+    nova_vaga = [
+        limitar_ponto_imagem(px + dx, py + dy)
+        for px, py in vaga
+    ]
+
+    vagas.append(nova_vaga)
+    vaga_selecionada = len(vagas) - 1
+    print(f"Vaga {origem_idx + 1} copiada para a posicao do mouse. Total: {len(vagas)}")
+
+
+def apagar_vaga(vaga_idx):
+    global vaga_selecionada
+    if vaga_idx is None or not (0 <= vaga_idx < len(vagas)):
+        print("Nenhuma vaga selecionada para apagar.")
+        return
+
+    vagas.pop(vaga_idx)
+    if not vagas:
+        vaga_selecionada = None
+    elif vaga_idx >= len(vagas):
+        vaga_selecionada = len(vagas) - 1
+    else:
+        vaga_selecionada = vaga_idx
+    print(f"Vaga {vaga_idx + 1} removida.")
+
+
+def deslocamento_tecla(tecla):
+    tecla_ascii = tecla & 0xFF
+    passo = PASSO_MOVIMENTO_RAPIDO if chr(tecla_ascii).isupper() else PASSO_MOVIMENTO
+
+    movimentos_ascii = {
+        ord("j"): (-PASSO_MOVIMENTO, 0),
+        ord("J"): (-PASSO_MOVIMENTO_RAPIDO, 0),
+        ord("l"): (PASSO_MOVIMENTO, 0),
+        ord("L"): (PASSO_MOVIMENTO_RAPIDO, 0),
+        ord("i"): (0, -PASSO_MOVIMENTO),
+        ord("I"): (0, -PASSO_MOVIMENTO_RAPIDO),
+        ord("k"): (0, PASSO_MOVIMENTO),
+        ord("K"): (0, PASSO_MOVIMENTO_RAPIDO),
+    }
+    if tecla_ascii in movimentos_ascii:
+        return movimentos_ascii[tecla_ascii]
+
+    movimentos_setas = {
+        2424832: (-passo, 0),
+        2555904: (passo, 0),
+        2490368: (0, -passo),
+        2621440: (0, passo),
+        81: (-passo, 0),
+        83: (passo, 0),
+        82: (0, -passo),
+        84: (0, passo),
+    }
+    return movimentos_setas.get(tecla)
 
 
 def calcular_escala_visualizacao(img):
@@ -136,9 +267,10 @@ def quebrar_texto_por_largura(texto, escala, largura_maxima):
 
 def desenhar_instrucoes(img):
     instrucoes = [
-        "Clique: novo ponto | Arraste ponto amarelo: ajustar recorte",
-        "Botao direito ou S: salvar | D: apagar vaga sob mouse | U: desfazer | Q: sair",
-        f"Vagas: {len(vagas)} | Pontos da nova vaga: {len(vaga_atual)}/4",
+        "Clique vazio: novo ponto | Clique na vaga: selecionar | Arraste ponto amarelo: ajustar",
+        "C: copiar selecionada para o mouse | Setas/IJKL: mover | IJKL maiusculo acelera",
+        "Botao direito ou S: salvar | D: apagar selecionada/sob mouse | U: desfazer | Q: sair",
+        f"Vagas: {len(vagas)} | Selecionada: {vaga_selecionada + 1 if vaga_selecionada is not None else '-'} | Nova vaga: {len(vaga_atual)}/4",
     ]
 
     escala_texto = max(0.45, min(0.85, LARGURA_JANELA / 1500))
@@ -164,11 +296,18 @@ def mouse_click(event, x, y, flags, params):
         ponto_proximo = encontrar_ponto_proximo(x_original, y_original)
         if ponto_proximo:
             ponto_arrastando = ponto_proximo
+            selecionar_vaga(ponto_proximo[0])
+            return
+
+        vaga_idx = encontrar_vaga_sob_mouse(x_original, y_original)
+        if vaga_idx is not None and not vaga_atual:
+            selecionar_vaga(vaga_idx)
             return
 
         vaga_atual.append((x_original, y_original))
         if len(vaga_atual) == 4:
             vagas.append(vaga_atual.copy())
+            selecionar_vaga(len(vagas) - 1)
             vaga_atual = []
             print(f"Nova vaga adicionada. Total: {len(vagas)}")
 
@@ -190,9 +329,10 @@ def desenhar_interface(img):
 
     for idx, vaga in enumerate(vagas, start=1):
         vaga_poly = np.array(vaga, np.int32)
-        cor = (0, 180, 255) if vaga_hover == idx - 1 else (0, 255, 0)
+        selecionada = vaga_selecionada == idx - 1
+        cor = (255, 255, 0) if selecionada else ((0, 180, 255) if vaga_hover == idx - 1 else (0, 255, 0))
         cv2.fillPoly(overlay, [vaga_poly], cor)
-        cv2.polylines(img_display, [vaga_poly], True, cor, 2)
+        cv2.polylines(img_display, [vaga_poly], True, cor, 3 if selecionada else 2)
 
         for px, py in vaga:
             cv2.circle(img_display, (px, py), 5, (0, 255, 255), -1)
@@ -243,21 +383,28 @@ while True:
     frame_exibicao = preparar_para_exibir(desenhar_interface(img))
     cv2.imshow(TITULO_JANELA, desenhar_instrucoes(frame_exibicao))
 
-    tecla = cv2.waitKey(1) & 0xFF
-    if tecla == ord('q'):
+    tecla = cv2.waitKeyEx(1)
+    tecla_ascii = tecla & 0xFF
+    if tecla_ascii in (ord('q'), ord('Q')):
         break
-    if tecla == ord('s'):
+    if tecla_ascii in (ord('s'), ord('S')):
         salvar_vagas()
-    elif tecla == ord('u'):
+    elif tecla_ascii in (ord('u'), ord('U')):
         if vaga_atual:
             vaga_atual.pop()
         elif vagas:
             vagas.pop()
+            if vaga_selecionada is not None and vaga_selecionada >= len(vagas):
+                vaga_selecionada = len(vagas) - 1 if vagas else None
         print("Ultima acao desfeita.")
-    elif tecla == ord('d'):
-        vaga_idx = encontrar_vaga_sob_mouse(*mouse_pos)
-        if vaga_idx is not None:
-            vagas.pop(vaga_idx)
-            print(f"Vaga {vaga_idx + 1} removida.")
+    elif tecla_ascii in (ord('d'), ord('D')):
+        vaga_idx = vaga_selecionada if vaga_selecionada is not None else encontrar_vaga_sob_mouse(*mouse_pos)
+        apagar_vaga(vaga_idx)
+    elif tecla_ascii in (ord('c'), ord('C')):
+        copiar_vaga_para_mouse()
+    else:
+        movimento = deslocamento_tecla(tecla)
+        if movimento:
+            mover_vaga(vaga_selecionada, *movimento)
 
 cv2.destroyAllWindows()

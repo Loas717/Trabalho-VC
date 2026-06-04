@@ -7,8 +7,12 @@ python-3.11.9-amd64.exe
 AGENTS.md
 assets/
 dataset/
+datasets/
 dataset_parking_cls/
 dataset_recortes/
 debug/
 runs/
 models/
+base_gerada.png
+base_alinhada.png
+base_backup.png
