@@ -6,7 +6,6 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
 
 from cenarios import escolher_cenario, listar_cenarios
 from visao_vagas import (
@@ -130,7 +129,7 @@ def detectar_ocupacao_laplaciano(frame, vagas, config, cache):
     return associacoes
 
 
-def analisar_recortes_vagas(frame, vagas, classificador_vagas, config):
+def analisar_recortes_vagas(frame, vagas, config):
     evidencias = []
     recortes = []
     indices_validos = []
@@ -144,7 +143,7 @@ def analisar_recortes_vagas(frame, vagas, classificador_vagas, config):
                 "recorte": recorte,
                 "ocupada_cls": False,
                 "confianca_cls": 0.0,
-                "classe_cls": "sem_modelo" if classificador_vagas is None else "sem_recorte",
+                "classe_cls": "sem_modelo",
                 "linhas": linhas,
             }
         )
@@ -153,22 +152,8 @@ def analisar_recortes_vagas(frame, vagas, classificador_vagas, config):
             recortes.append(recorte)
             indices_validos.append(idx)
 
-    if classificador_vagas is None or not recortes:
+    if recortes is None:
         return evidencias
-
-    resultados = classificador_vagas.predict(recortes, imgsz=tamanho_recorte, verbose=False)
-    for idx, resultado in zip(indices_validos, resultados):
-        nomes = resultado.names
-        classe_id = int(resultado.probs.top1)
-        confianca = float(resultado.probs.top1conf)
-        classe_nome = nomes[classe_id].lower()
-        evidencias[idx].update(
-            {
-                "ocupada_cls": classe_nome == "occupied" and confianca >= float(config["confianca_ocupada"]),
-                "confianca_cls": confianca,
-                "classe_cls": classe_nome,
-            }
-        )
 
     return evidencias
 
@@ -309,13 +294,8 @@ def main():
             f"Coordenadas nao encontradas: {arquivo_coordenadas}. Rode primeiro: python selector.py"
         )
 
-    caminho_classificador = Path(config["modelo_classificador_vagas"])
-    classificador_vagas = YOLO(str(caminho_classificador)) if caminho_classificador.exists() else None
-    if classificador_vagas is None:
-        print(f"Classificador de vagas nao encontrado em {caminho_classificador}. Usando Laplaciano + linhas.")
-    else:
-        print(f"Classificador de vagas carregado: {caminho_classificador}")
-
+    print(f"Classificador de vagas nao encontrado em ''. Usando Laplaciano + linhas.")
+    
     with arquivo_coordenadas.open("rb") as f:
         vagas_pos = pickle.load(f)
 
@@ -334,7 +314,6 @@ def main():
     evidencias_vagas = analisar_recortes_vagas(
         np.zeros((10, 10, 3), dtype=np.uint8),
         [],
-        classificador_vagas,
         config,
     )
     associacoes_vagas = [
@@ -364,7 +343,7 @@ def main():
 
             intervalo_deteccao = max(1, int(config["detectar_a_cada_n_frames"]))
             if numero_frame == 1 or numero_frame % intervalo_deteccao == 0:
-                evidencias_vagas = analisar_recortes_vagas(frame, vagas_pos, classificador_vagas, config)
+                evidencias_vagas = analisar_recortes_vagas(frame, vagas_pos, config)
                 associacoes_vagas = detectar_ocupacao_laplaciano(frame, vagas_pos, config, motion_cache)
 
             vagas_livres = 0
